@@ -2733,4 +2733,3 @@ function AdminTab({ allPlayers, onRefresh, showToast, currentSquad }) {
     </div>
   );
 }
-
