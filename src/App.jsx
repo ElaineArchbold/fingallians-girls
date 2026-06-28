@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL      = "https://rzjaxsfqdajnncfdwemq.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_F7tdlTdu7-vYWkNynXW94g_mgzDZ-O_";
-const SUPER_ADMIN_EMAIL = "e.t.archbold@gmail.com";
+const SUPER_ADMIN_EMAIL = null;
 const COACH_EMAIL       = "Fingallians2015GirlsChallenge@gmail.com";
 const FORMSPREE_URL     = "https://formspree.io/f/mrewqpqo";
 const WHATSAPP_2015     = "https://chat.whatsapp.com/Bc76P9R4TJvHbbdQ2xEhhA";
@@ -15,14 +15,9 @@ const WHATSAPP_LINK = SQUAD === "2017" ? WHATSAPP_2017 : WHATSAPP_2015;
 const SQUAD_LABEL = SQUAD === "2017" ? "Fingallians 2017 Girls" : "Fingallians 2015 Girls";
 const SQUAD_SHORT = SQUAD === "2017" ? "2017 Girls" : "2015 Girls";
 
-const ADMIN_EMAILS = [
-  "e.t.archbold@gmail.com",
-  ...(SQUAD === "2017" ? ["lee@ssa.ie"] : []),
-];
+const ADMIN_EMAILS = ["e.t.archbold@gmail.com"];
 
-const ADMIN_PLAYER_NAMES = {
-  ...(SQUAD === "2017" ? { "lee@ssa.ie": "Rose Connolly" } : {}),
-};
+const ADMIN_PLAYER_NAMES = {};
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
