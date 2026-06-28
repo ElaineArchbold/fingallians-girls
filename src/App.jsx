@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL      = "https://rzjaxsfqdajnncfdwemq.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_F7tdlTdu7-vYWkNynXW94g_mgzDZ-O_";
-const SUPER_ADMIN_EMAIL = null;
+const SUPER_ADMIN_EMAIL = "e.t.archbold@gmail.com";
 const COACH_EMAIL       = "Fingallians2015GirlsChallenge@gmail.com";
 const FORMSPREE_URL     = "https://formspree.io/f/mrewqpqo";
 const WHATSAPP_2015     = "https://chat.whatsapp.com/Bc76P9R4TJvHbbdQ2xEhhA";
@@ -701,7 +701,7 @@ export default function App() {
   }
 
   const isAdmin      = ADMIN_EMAILS.includes(session?.user?.email);
-  const isSuperAdmin = false;
+  const isSuperAdmin = isAdmin;
   const pts     = totalPts(checks);
   const weeksDone = WEEKS.filter(w => weekPts(w, checks) === weekMaxPts(w)).length;
 
@@ -715,6 +715,7 @@ export default function App() {
     { id:"plan",     label:"Plan"     },
     { id:"progress", label:"Progress" },
     ...(isSuperAdmin ? [{ id:"admin",   label:"Admin"   }] : []),
+    ...(isSuperAdmin ? [{ id:"dashboard", label:"Dashboard" }] : []),
   ];
 
   return (
@@ -760,7 +761,14 @@ export default function App() {
 
         {session && isAdmin && tab === "admin" && (
           <div className="admin-wrap" style={{paddingTop:14}}>
+            
             <AdminTab allPlayers={allPlayers} session={session} onRefresh={() => loadAllPlayers(SQUAD)} showToast={showToast} currentSquad={SQUAD} />
+          </div>
+        )}
+        {session && isSuperAdmin && tab === "dashboard" && (
+          <div className="admin-wrap" style={{paddingTop:14}}>
+            
+            <DashboardTab allPlayers={allPlayers} squadLabel={SQUAD === "2017" ? "2017 Girls" : "2015 Girls"} />
           </div>
         )}
       </div>
@@ -2661,7 +2669,7 @@ function AdminTab({ allPlayers, onRefresh, showToast, currentSquad }) {
 
   async function removePlayer(id, name) {
     if (!window.confirm(`Remove ${name} from the squad list?`)) return;
-    await sb.from("players").delete().eq("id", id).eq("squad", currentSquad);
+    await sb.from("players").delete().eq("id", id);
     showToast(`🗑️ ${name} removed`);
     onRefresh();
   }
@@ -2725,4 +2733,3 @@ function AdminTab({ allPlayers, onRefresh, showToast, currentSquad }) {
     </div>
   );
 }
-
