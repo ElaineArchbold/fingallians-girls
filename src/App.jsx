@@ -443,20 +443,6 @@ select.inp{appearance:none;cursor:pointer}
 function Confetti({ trigger }) {
   const [pieces, setPieces] = useState([]);
 
-  const handleSignOut = async () => {
-    try {
-      await sb.auth.signOut();
-    } catch (_) {}
-    try {
-      sessionStorage.clear();
-    } catch (_) {}
-    setSession(null);
-    setPlayer(null);
-    setPlayerLoaded(false);
-    setActiveTab("home");
-    window.history.replaceState({}, document.title, window.location.pathname);
-  };
-
 
 useEffect(() => {
     if (!trigger) return;
@@ -578,7 +564,22 @@ export default function App() {
   const [checks, setChecks]     = useState({});
   const [allPlayers, setAllPlayers] = useState([]);
   const [playerLoaded, setPlayerLoaded] = useState(false);
-  const [confettiTrigger, setConfettiTrigger] = useState(0);
+  
+
+  const handleSignOut = async () => {
+    try {
+      await sb.auth.signOut();
+    } catch (_) {}
+    try {
+      sessionStorage.clear();
+    } catch (_) {}
+    setSession(null);
+    setPlayer(null);
+    setPlayerLoaded(false);
+    setActiveTab("home");
+    window.history.replaceState({}, document.title, window.location.pathname);
+  };
+const [confettiTrigger, setConfettiTrigger] = useState(0);
   const [waConsent, setWaConsent] = useState(() => { try { return localStorage.getItem(`waConsent:${SQUAD}:v2`) === "true"; } catch { return false; } });
   const [tcAccepted, setTcAccepted] = useState(() => { try { return localStorage.getItem(`tcVersion:${SQUAD}`) === "v2"; } catch { return false; } });
   const childAccessToken = useMemo(() => new URLSearchParams(window.location.search).get("child"), []);
@@ -1455,7 +1456,7 @@ function ChildWeeklyView({ player, checks, playerLoaded, onToggle, showToast, pt
   const totalPct = Math.round((pts / maxPossible) * 100);
 
   if (!playerLoaded) {
-    return <div className="loader"><div className="spinner"/>Loading {(player?.name || 'Your child').split(' ')[0]}'s App…</div>;
+    return <div className="loader"><div className="spinner"/>Loading your app…</div>;
   }
 
   if (!player) {
