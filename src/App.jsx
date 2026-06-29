@@ -565,6 +565,8 @@ export default function App() {
   const [confettiTrigger, setConfettiTrigger] = useState(0);
   const [waConsent, setWaConsent] = useState(() => { try { return localStorage.getItem(`waConsent:${SQUAD}:v2`) === "true"; } catch { return false; } });
   const [tcAccepted, setTcAccepted] = useState(() => { try { return localStorage.getItem(`tcVersion:${SQUAD}`) === "v2"; } catch { return false; } });
+  const childAccessToken = useMemo(() => new URLSearchParams(window.location.search).get("child"), []);
+  const isChildView = !!childAccessToken;
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -572,20 +574,30 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isChildView) {
+      setLoading(false);
+      return;
+    }
     sb.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
     });
     const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => subscription.unsubscribe();
-  }, []);
+  }, [isChildView]);
 
   useEffect(() => {
+    if (isChildView) return;
     if (!session) { setPlayer(null); setChecks({}); setPlayerLoaded(false); return; }
     if (ADMIN_EMAILS.includes(session.user.email)) { setPlayerLoaded(true); loadAllPlayers(SQUAD); return; }
     setPlayerLoaded(false);
     loadPlayerData();
-  }, [session]);
+  }, [session, isChildView]);
+
+  useEffect(() => {
+    if (!isChildView) return;
+    loadChildPlayerData();
+  }, [isChildView, childAccessToken]);
 
   async function loadPlayerData() {
     try {
@@ -602,7 +614,7 @@ export default function App() {
         // Step 2: get the player details directly
         const { data: playerData, error: playerErr } = await sb
           .from("players")
-          .select("id, name, squad")
+          .select("id, name, squad, child_access_token")
           .eq("id", link.player_id)
           .maybeSingle();
 
@@ -624,6 +636,39 @@ export default function App() {
       }
     } catch(e) {
       console.error("loadPlayerData error:", e);
+    }
+    setPlayerLoaded(true);
+  }
+
+  async function loadChildPlayerData() {
+    try {
+      setPlayerLoaded(false);
+      const { data: playerData, error: playerErr } = await sb
+        .from("players")
+        .select("id, name, squad, child_access_token")
+        .eq("child_access_token", childAccessToken)
+        .eq("squad", SQUAD)
+        .maybeSingle();
+
+      if (playerErr) console.error("child player error:", playerErr);
+
+      if (playerData) {
+        setPlayer(playerData);
+        const { data: comps } = await sb
+          .from("task_completions")
+          .select("task_key")
+          .eq("player_id", playerData.id);
+        const c = {};
+        [...new Set((comps || []).map(r => r.task_key))].forEach(k => { c[k] = true; });
+        setChecks(c);
+      } else {
+        setPlayer(null);
+        setChecks({});
+      }
+    } catch(e) {
+      console.error("loadChildPlayerData error:", e);
+      setPlayer(null);
+      setChecks({});
     }
     setPlayerLoaded(true);
   }
@@ -653,7 +698,7 @@ export default function App() {
         .eq("player_id", player.id)
         .eq("task_key", taskKey);
       setChecks(c => { const n={...c}; delete n[taskKey]; return n; });
-      logAudit(session.user.email, player, "task_incomplete", label);
+      logAudit(isChildView ? "Child Version" : session?.user?.email, player, "task_incomplete", `${label}${isChildView ? " marked incomplete from child view" : ""}`);
     } else {
       await sb.from("task_completions")
         .delete()
@@ -676,7 +721,7 @@ export default function App() {
       setChecks(newChecks);
       setConfettiTrigger(t => t + 1);
       showToast(`✅ ${label} logged! +${pts} pts`);
-      logAudit(session.user.email, player, "task_complete", label, null, `+${pts} pts`);
+      logAudit(isChildView ? "Child Version" : session?.user?.email, player, "task_complete", `${label}${isChildView ? " marked complete from child view" : ""}`, null, `+${pts} pts`);
     }
   }
 
@@ -701,6 +746,27 @@ export default function App() {
     <><style>{CSS}</style>
     <div className="loader"><div className="spinner"/><span>Loading…</span></div></>
   );
+
+  if (isChildView) {
+    return (
+      <>
+        <style>{CSS}</style>
+        <div className="shell">
+          <ChildWeeklyView
+            player={player}
+            checks={checks}
+            playerLoaded={playerLoaded}
+            onToggle={toggleTask}
+            showToast={showToast}
+            pts={pts}
+            weeksDone={weeksDone}
+          />
+        </div>
+        {toast && <div className="toast">{toast}</div>}
+        <Confetti trigger={confettiTrigger} />
+      </>
+    );
+  }
 
   const TABS = [
     { id:"home",     label:"Home"     },
@@ -884,10 +950,10 @@ function AuthScreen({ showToast }) {
         <div className="card-bd">
           {err && <div className="err">{err}</div>}
           <label className="lbl">Email</label>
-          <input className="inp" type="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
+          <input className="inp" type="email" name="email" autoComplete="username" inputMode="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
           <label className="lbl">Password</label>
           <div style={{position:"relative",marginBottom:0}}>
-            <input className="inp" type={showPw?"text":"password"} placeholder="••••••••" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} style={{marginBottom:13,paddingRight:44}} />
+            <input className="inp" type={showPw?"text":"password"} name={mode === "login" ? "current-password" : "new-password"} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="••••••••" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} style={{marginBottom:13,paddingRight:44}} />
             <button type="button" onClick={()=>setShowPw(v=>!v)} style={{position:"absolute",right:12,top:12,background:"none",border:"none",cursor:"pointer",fontSize:18,color:"var(--muted)",padding:0}}>
               {showPw?"🙈":"👁️"}
             </button>
@@ -895,7 +961,7 @@ function AuthScreen({ showToast }) {
           {mode === "signup" && <>
             <label className="lbl">Confirm Password</label>
             <div style={{position:"relative"}}>
-              <input className="inp" type={showPw2?"text":"password"} placeholder="••••••••" value={pw2} onChange={e=>setPw2(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} style={{marginBottom:13,paddingRight:44}} />
+              <input className="inp" type={showPw2?"text":"password"} name="confirm-new-password" autoComplete="new-password" placeholder="••••••••" value={pw2} onChange={e=>setPw2(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} style={{marginBottom:13,paddingRight:44}} />
               <button type="button" onClick={()=>setShowPw2(v=>!v)} style={{position:"absolute",right:12,top:12,background:"none",border:"none",cursor:"pointer",fontSize:18,color:"var(--muted)",padding:0}}>
                 {showPw2?"🙈":"👁️"}
               </button>
@@ -1260,6 +1326,154 @@ function WAConsentButton({ waConsent, setWaConsent, player, userEmail }) {
   );
 }
 
+
+function makeChildAccessToken() {
+  try {
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch (_) {
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 18)}`;
+  }
+}
+
+function ChildVersionBox({ player, showToast }) {
+  const [token, setToken] = useState(player?.child_access_token || "");
+  const [busy, setBusy] = useState(false);
+  const childLink = token ? `${window.location.origin}${window.location.pathname}?child=${token}` : "";
+
+  useEffect(() => {
+    setToken(player?.child_access_token || "");
+  }, [player?.id, player?.child_access_token]);
+
+  async function createOrCopyLink() {
+    if (!player?.id) return;
+    setBusy(true);
+    let nextToken = token;
+    try {
+      if (!nextToken) {
+        nextToken = makeChildAccessToken();
+        const { error } = await sb
+          .from("players")
+          .update({ child_access_token: nextToken })
+          .eq("id", player.id)
+          .eq("squad", SQUAD);
+        if (error) throw error;
+        setToken(nextToken);
+      }
+
+      const link = `${window.location.origin}${window.location.pathname}?child=${nextToken}`;
+      await navigator.clipboard.writeText(link);
+      showToast("📱 Child Version link copied!");
+    } catch (e) {
+      console.error("Child link error:", e);
+      showToast("❌ Could not create the child link. Check Supabase setup and try again.");
+    }
+    setBusy(false);
+  }
+
+  async function shareLink() {
+    if (!childLink) return createOrCopyLink();
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: "Fingallians Child Version",
+          text: `${player?.name || "Player"}'s child-friendly challenge view`,
+          url: childLink
+        });
+      } else {
+        await navigator.clipboard.writeText(childLink);
+        showToast("📱 Child Version link copied!");
+      }
+    } catch (_) {}
+  }
+
+  return (
+    <div style={{background:"linear-gradient(135deg,#fff9e8 0%,#ffffff 100%)",border:"2px solid var(--gold)",borderRadius:"var(--radius)",padding:"16px 18px",marginTop:12,boxShadow:"var(--shadow)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+        <div style={{fontSize:30}}>📱</div>
+        <div>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:24,letterSpacing:"0.03em",fontWeight:900,color:"var(--g)"}}>CHILD VERSION</div>
+          <div style={{fontSize:13,color:"var(--mid)",lineHeight:1.4}}>Create a simple link for your child's phone.</div>
+        </div>
+      </div>
+      <div style={{fontSize:13,color:"var(--mid)",lineHeight:1.6,marginBottom:12}}>
+        They'll only see this week's challenge and their own progress — no WhatsApp, no admin, no consent log and no parent details.
+      </div>
+      {childLink && (
+        <div style={{fontSize:12,color:"var(--muted)",background:"white",border:"1px solid var(--line)",borderRadius:10,padding:"9px 10px",marginBottom:10,wordBreak:"break-all"}}>
+          {childLink}
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:childLink?"1fr 1fr":"1fr",gap:10}}>
+        <button className="btn btn-green" onClick={createOrCopyLink} disabled={busy}>
+          {busy ? "…" : childLink ? "COPY CHILD LINK" : "CREATE CHILD LINK"}
+        </button>
+        {childLink && <button className="btn btn-ghost" onClick={shareLink}>SHARE LINK</button>}
+      </div>
+    </div>
+  );
+}
+
+function ChildWeeklyView({ player, checks, playerLoaded, onToggle, showToast, pts, weeksDone }) {
+  const currentWeekIndex = Math.min(Math.max(Math.floor((new Date() - new Date("2026-06-29")) / (7*24*60*60*1000)), 0), 7);
+  const w = WEEKS[currentWeekIndex];
+  const ps = PHASE_STYLE[w.phase];
+  const wPts = weekPts(w, checks);
+  const wMax = weekMaxPts(w);
+  const pct = Math.round((wPts / wMax) * 100);
+  const maxPossible = WEEKS.reduce((a,wk) => a + weekMaxPts(wk), 0);
+  const totalPct = Math.round((pts / maxPossible) * 100);
+
+  if (!playerLoaded) {
+    return <div className="loader"><div className="spinner"/>Loading Child Version…</div>;
+  }
+
+  if (!player) {
+    return (
+      <div className="auth-wrap">
+        <div className="card">
+          <div className="card-bd" style={{textAlign:"center",padding:"28px 20px"}}>
+            <div style={{fontSize:52,marginBottom:12}}>🔗</div>
+            <h2 style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:28,color:"var(--g)",margin:"0 0 8px"}}>Link not found</h2>
+            <p style={{fontSize:14,color:"var(--mid)",lineHeight:1.6}}>This Child Version link is not active. Ask your parent or guardian to create a new link from the parent version of the app.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="home-wrap">
+      <div className="welcome-card">
+        <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.18)",borderRadius:999,padding:"7px 12px",fontSize:13,fontWeight:900,letterSpacing:"0.04em",marginBottom:12}}>
+          📱 CHILD VERSION
+        </div>
+        <h2>THIS WEEK'S CHALLENGE</h2>
+        <div className="player-name">👤 {player.name}</div>
+        <div style={{fontSize:13,opacity:0.86,marginTop:6}}>Week {w.week} of 8 · {w.dates}</div>
+        <div className="pts-row">
+          <div className="pts-box"><div className="num">{pts}</div><div className="lbl2">Total Points</div></div>
+          <div className="pts-box"><div className="num">{totalPct}%</div><div className="lbl2">Progress</div></div>
+          <div className="pts-box"><div className="num">{weeksDone}</div><div className="lbl2">Weeks Done</div></div>
+        </div>
+      </div>
+      <div style={{background:"white",borderRadius:"var(--radius)",boxShadow:"var(--shadow)",padding:"14px 16px",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <strong style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,color:"var(--g)"}}>This week</strong>
+          <span style={{fontSize:13,color:"var(--mid)"}}>{wPts}/{wMax} pts</span>
+        </div>
+        <div className="prog"><div style={{width:`${pct}%`,background:ps.accent}} /></div>
+      </div>
+      <WeekDetail w={w} ps={ps} pct={pct} wPts={wPts} wMax={wMax} checks={checks} onToggle={onToggle} player={player} showToast={showToast} isChildView={true} />
+      <div style={{textAlign:"center",fontSize:12,color:"var(--muted)",lineHeight:1.5,margin:"14px 8px 6px"}}>
+        Parent/guardian version has the full plan, WhatsApp options and account settings.
+      </div>
+    </div>
+  );
+}
+
+
 function HomeTab({ player, checks, pts, weeksDone, onNav, onToggle, showToast, waConsent, setWaConsent, userEmail }) {
   const [activeWk, setActiveWk] = useState(0);
   const streak = computeStreak(checks);
@@ -1316,6 +1530,7 @@ function HomeTab({ player, checks, pts, weeksDone, onNav, onToggle, showToast, w
       </div>
       <WeekDetail w={w} ps={ps} pct={pct} wPts={wPts} wMax={wMax} checks={checks} onToggle={onToggle} player={player} showToast={showToast} />
       <button className="btn btn-ghost" style={{marginTop:4}} onClick={onNav}>VIEW FULL 8-WEEK PLAN →</button>
+      <ChildVersionBox player={player} showToast={showToast} />
       <div style={{background:"linear-gradient(135deg,#7d1018 0%,var(--g) 100%)",borderRadius:"var(--radius)",padding:"16px 18px",marginTop:12,color:"white",textAlign:"center"}}>
         <div style={{fontSize:24,marginBottom:6}}>📱🏑⚽</div>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,letterSpacing:"0.02em",marginBottom:6}}>SHARE YOUR SKILLS!</div>
@@ -1364,7 +1579,7 @@ function WeekCountdown({ weekNum }) {
   );
 }
 
-function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToast }) {
+function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToast, isChildView = false }) {
   const [expandedSkill, setExpandedSkill] = useState(null);
   const [expandedSquad, setExpandedSquad] = useState(false);
   const [playingVideo, setPlayingVideo]   = useState(null);
@@ -1495,7 +1710,7 @@ function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToas
             {expandedSquad && (
               <div className="squad-body">
                 <p className="squad-desc">{w.squad.desc}</p>
-                <div className="squad-cta">👥 Get 3–4 girls together — squad sessions earn extra points! Don’t forget to send photos or short videos of your squad session to the WhatsApp group to claim the bonus.</div>
+                <div className="squad-cta">{isChildView ? "👥 Get 3–4 girls together — squad sessions earn extra points! Ask your parent or guardian about sending proof for bonus points." : "👥 Get 3–4 girls together — squad sessions earn extra points! Don’t forget to send photos or short videos of your squad session to the WhatsApp group to claim the bonus."}</div>
                 {/* Three drill videos for this week */}
                 <div style={{display:"flex",gap:8,marginBottom:12}}>
                   {[
