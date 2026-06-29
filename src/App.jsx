@@ -954,7 +954,7 @@ function AuthScreen({ showToast }) {
               </div>
             </div>
             <p style={{fontSize:12,color:"var(--muted)",marginBottom:20}}>Can't find it? Check your spam/junk folder.</p>
-            <button className="btn btn-green" onClick={()=>{setMode("login");setEmail(signedUpEmail);setPw("");setPw2("");}}>
+            <button className="btn btn-green" style={{fontSize:16}} onClick={()=>{setMode("login");setEmail(signedUpEmail);setPw("");setPw2("");}}>
               GO TO SIGN IN →
             </button>
           </div>
@@ -1034,7 +1034,7 @@ function AuthScreen({ showToast }) {
               <span>I have read and agree to the <button type="button" className="link-btn" onClick={()=>setShowTc(true)} style={{fontSize:13}}>Terms & Conditions</button> and confirm I am the parent or guardian of the player I am registering.</span>
             </label>
           </>}
-          <button className="btn btn-green" onClick={submit} disabled={busy}>
+          <button className="btn btn-green" style={{fontSize:16}} onClick={submit} disabled={busy}>
             {busy ? "…" : mode === "login" ? "SIGN IN" : "CREATE ACCOUNT"}
           </button>
           {mode === "login" && (
@@ -1093,7 +1093,7 @@ function LinkPlayerScreen({ onLink }) {
                   <option value="">— Choose your daughter —</option>
                   {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
-                <button className="btn btn-green" onClick={()=>selected&&onLink(selected)} disabled={!selected}>
+                <button className="btn btn-green" style={{fontSize:16}} onClick={()=>selected&&onLink(selected)} disabled={!selected}>
                   CONFIRM & CONTINUE
                 </button>
                 <p style={{fontSize:12,color:"var(--muted)",marginTop:12,textAlign:"center"}}>
@@ -1436,21 +1436,20 @@ function ChildVersionBox({ player, showToast }) {
 
   return (
     <div style={{background:"linear-gradient(135deg,#fff9e8 0%,#ffffff 100%)",border:"2px solid var(--gold)",borderRadius:"var(--radius)",padding:"16px 18px",marginTop:12,boxShadow:"var(--shadow)"}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-        <div style={{fontSize:30}}>📱</div>
+      <div style={{display:"flex",justifyContent:"center",marginBottom:8,textAlign:"center"}}>
         <div>
           <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:24,letterSpacing:"0.03em",fontWeight:900,color:"var(--g)"}}>Want your child to have their own version?</div>
           <div style={{fontSize:13,color:"var(--mid)",lineHeight:1.4}}>Send them a simple child-friendly version of the app.</div>
         </div>
       </div>
-      <div style={{fontSize:13,color:"var(--mid)",lineHeight:1.6,marginBottom:12}}>
+      <div style={{fontSize:13,color:"var(--mid)",lineHeight:1.6,marginBottom:12,textAlign:"center"}}>
         If they have their own phone or tablet, you can send them a child-friendly version of the app. They'll be able to complete tasks and watch their progress, while everything stays synced with your dashboard.
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        <button className="btn btn-green" onClick={createOrCopyLink} disabled={busy}>
-          {busy ? "…" : "📋 Copy Link"}
+        <button className="btn btn-green" style={{fontSize:16}} onClick={createOrCopyLink} disabled={busy}>
+          {busy ? "…" : "Copy Link"}
         </button>
-        <button className="btn btn-ghost" onClick={shareLink} disabled={busy}>📤 Share</button>
+        <button className="btn btn-ghost" style={{fontSize:16}} onClick={shareLink} disabled={busy}>Share</button>
       </div>
     </div>
   );
@@ -1488,7 +1487,7 @@ function ChildWeeklyView({ player, checks, playerLoaded, onToggle, showToast, pt
     <div className="home-wrap">
       <div className="welcome-card">
         <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.18)",borderRadius:999,padding:"7px 12px",fontSize:13,fontWeight:900,letterSpacing:"0.04em",marginBottom:12}}>
-          📱 CHILD VERSION
+          {player?.name ? `${player.name.split(" ")[0]}'s App` : "Your App"}
         </div>
         <h2>THIS WEEK'S CHALLENGE</h2>
         <div className="player-name">👤 {player.name}</div>
@@ -1570,7 +1569,7 @@ function HomeTab({ player, checks, pts, weeksDone, onNav, onToggle, showToast, w
         })}
       </div>
       <WeekDetail w={w} ps={ps} pct={pct} wPts={wPts} wMax={wMax} checks={checks} onToggle={onToggle} player={player} showToast={showToast} />
-      <button className="btn btn-ghost" style={{marginTop:4}} onClick={onNav}>VIEW FULL 8-WEEK PLAN →</button>
+      <button className="btn btn-ghost" style={{fontSize:16}} style={{marginTop:4}} onClick={onNav}>VIEW FULL 8-WEEK PLAN →</button>
       <ChildVersionBox player={player} showToast={showToast} />
       <div style={{background:"linear-gradient(135deg,#7d1018 0%,var(--g) 100%)",borderRadius:"var(--radius)",padding:"16px 18px",marginTop:12,color:"white",textAlign:"center"}}>
         <div style={{fontSize:24,marginBottom:6}}>📱🏑⚽</div>
