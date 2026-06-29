@@ -442,7 +442,23 @@ select.inp{appearance:none;cursor:pointer}
 
 function Confetti({ trigger }) {
   const [pieces, setPieces] = useState([]);
-  useEffect(() => {
+
+  const handleSignOut = async () => {
+    try {
+      await sb.auth.signOut();
+    } catch (_) {}
+    try {
+      sessionStorage.clear();
+    } catch (_) {}
+    setSession(null);
+    setPlayer(null);
+    setPlayerLoaded(false);
+    setActiveTab("home");
+    window.history.replaceState({}, document.title, window.location.pathname);
+  };
+
+
+useEffect(() => {
     if (!trigger) return;
     const colors = ["#a31621","#d4a017","#fff","#25D366","#7b1fa2","#e65100"];
     const newPieces = Array.from({length:36}, (_,i) => ({
@@ -698,7 +714,7 @@ export default function App() {
         .eq("player_id", player.id)
         .eq("task_key", taskKey);
       setChecks(c => { const n={...c}; delete n[taskKey]; return n; });
-      logAudit(isChildView ? "Child Version" : session?.user?.email, player, "task_incomplete", `${label}${isChildView ? " marked incomplete from child view" : ""}`);
+      logAudit(isChildView ? "{(player?.name || 'Your child').split(' ')[0]}'s App" : session?.user?.email, player, "task_incomplete", `${label}${isChildView ? " marked incomplete from child view" : ""}`);
     } else {
       await sb.from("task_completions")
         .delete()
@@ -721,7 +737,7 @@ export default function App() {
       setChecks(newChecks);
       setConfettiTrigger(t => t + 1);
       showToast(`✅ ${label} logged! +${pts} pts`);
-      logAudit(isChildView ? "Child Version" : session?.user?.email, player, "task_complete", `${label}${isChildView ? " marked complete from child view" : ""}`, null, `+${pts} pts`);
+      logAudit(isChildView ? "{(player?.name || 'Your child').split(' ')[0]}'s App" : session?.user?.email, player, "task_complete", `${label}${isChildView ? " marked complete from child view" : ""}`, null, `+${pts} pts`);
     }
   }
 
@@ -950,7 +966,7 @@ function AuthScreen({ showToast }) {
         <div className="card-bd">
           {err && <div className="err">{err}</div>}
           <label className="lbl">Email</label>
-          <input className="inp" type="email" name="email" autoComplete="username" inputMode="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
+          <input className="inp" type="email" name="email" autoComplete="username" inputMode="email" placeholder="your@email.com" value={email} onChange={e= id="email" autoCapitalize="none" spellCheck={false}>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
           <label className="lbl">Password</label>
           <div style={{position:"relative",marginBottom:0}}>
             <input className="inp" type={showPw?"text":"password"} name={mode === "login" ? "current-password" : "new-password"} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="••••••••" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} style={{marginBottom:13,paddingRight:44}} />
@@ -1077,7 +1093,7 @@ function LinkPlayerScreen({ onLink }) {
         </div>
       </div>
       <div style={{textAlign:"center",marginTop:8}}>
-        <button className="link-btn" onClick={()=>sb.auth.signOut()}>Sign out</button>
+        <button className="link-btn" onClick={handleSignOut}>Sign out</button>
       </div>
     </div>
   );
@@ -1364,7 +1380,7 @@ function ChildVersionBox({ player, showToast }) {
 
       const link = `${window.location.origin}${window.location.pathname}?child=${nextToken}`;
       await navigator.clipboard.writeText(link);
-      showToast("📱 Child Version link copied!");
+      showToast("📱 {(player?.name || 'Your child').split(' ')[0]}'s App link copied!");
     } catch (e) {
       console.error("Child link error:", e);
       showToast("❌ Could not create the child link. Check Supabase setup and try again.");
@@ -1373,19 +1389,37 @@ function ChildVersionBox({ player, showToast }) {
   }
 
   async function shareLink() {
-    if (!childLink) return createOrCopyLink();
+    if (!player?.id) return;
+    setBusy(true);
+    let nextToken = token;
     try {
+      if (!nextToken) {
+        nextToken = makeChildAccessToken();
+        const { error } = await sb
+          .from("players")
+          .update({ child_access_token: nextToken })
+          .eq("id", player.id)
+          .eq("squad", SQUAD);
+        if (error) throw error;
+        setToken(nextToken);
+      }
+
+      const link = `${window.location.origin}${window.location.pathname}?child=${nextToken}`;
       if (navigator.share) {
         await navigator.share({
-          title: "Fingallians Child Version",
+          title: "Fingallians {(player?.name || 'Your child').split(' ')[0]}'s App",
           text: `${player?.name || "Player"}'s child-friendly challenge view`,
-          url: childLink
+          url: link
         });
       } else {
-        await navigator.clipboard.writeText(childLink);
-        showToast("📱 Child Version link copied!");
+        await navigator.clipboard.writeText(link);
+        showToast("📱 {(player?.name || 'Your child').split(' ')[0]}'s App link copied!");
       }
-    } catch (_) {}
+    } catch (e) {
+      console.error("Child share error:", e);
+      showToast("❌ Could not share the child link. Check Supabase setup and try again.");
+    }
+    setBusy(false);
   }
 
   return (
@@ -1393,23 +1427,18 @@ function ChildVersionBox({ player, showToast }) {
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
         <div style={{fontSize:30}}>📱</div>
         <div>
-          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:24,letterSpacing:"0.03em",fontWeight:900,color:"var(--g)"}}>CHILD VERSION</div>
-          <div style={{fontSize:13,color:"var(--mid)",lineHeight:1.4}}>Create a simple link for your child's phone.</div>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:24,letterSpacing:"0.03em",fontWeight:900,color:"var(--g)"}}>Want your child to have their own version?</div>
+          <div style={{fontSize:13,color:"var(--mid)",lineHeight:1.4}}>Send them a simple child-friendly version of the app.</div>
         </div>
       </div>
       <div style={{fontSize:13,color:"var(--mid)",lineHeight:1.6,marginBottom:12}}>
-        They'll only see this week's challenge and their own progress — no WhatsApp, no admin, no consent log and no parent details.
+        If they have their own phone or tablet, you can send them a child-friendly version of the app. They'll be able to complete tasks and watch their progress, while everything stays synced with your dashboard.
       </div>
-      {childLink && (
-        <div style={{fontSize:12,color:"var(--muted)",background:"white",border:"1px solid var(--line)",borderRadius:10,padding:"9px 10px",marginBottom:10,wordBreak:"break-all"}}>
-          {childLink}
-        </div>
-      )}
-      <div style={{display:"grid",gridTemplateColumns:childLink?"1fr 1fr":"1fr",gap:10}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <button className="btn btn-green" onClick={createOrCopyLink} disabled={busy}>
-          {busy ? "…" : childLink ? "COPY CHILD LINK" : "CREATE CHILD LINK"}
+          {busy ? "…" : "📋 Copy Link"}
         </button>
-        {childLink && <button className="btn btn-ghost" onClick={shareLink}>SHARE LINK</button>}
+        <button className="btn btn-ghost" onClick={shareLink} disabled={busy}>📤 Share</button>
       </div>
     </div>
   );
@@ -1426,7 +1455,7 @@ function ChildWeeklyView({ player, checks, playerLoaded, onToggle, showToast, pt
   const totalPct = Math.round((pts / maxPossible) * 100);
 
   if (!playerLoaded) {
-    return <div className="loader"><div className="spinner"/>Loading Child Version…</div>;
+    return <div className="loader"><div className="spinner"/>Loading {(player?.name || 'Your child').split(' ')[0]}'s App…</div>;
   }
 
   if (!player) {
@@ -1436,7 +1465,7 @@ function ChildWeeklyView({ player, checks, playerLoaded, onToggle, showToast, pt
           <div className="card-bd" style={{textAlign:"center",padding:"28px 20px"}}>
             <div style={{fontSize:52,marginBottom:12}}>🔗</div>
             <h2 style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:28,color:"var(--g)",margin:"0 0 8px"}}>Link not found</h2>
-            <p style={{fontSize:14,color:"var(--mid)",lineHeight:1.6}}>This Child Version link is not active. Ask your parent or guardian to create a new link from the parent version of the app.</p>
+            <p style={{fontSize:14,color:"var(--mid)",lineHeight:1.6}}>This {(player?.name || 'Your child').split(' ')[0]}'s App link is not active. Ask your parent or guardian to create a new link from the parent version of the app.</p>
           </div>
         </div>
       </div>
@@ -1447,7 +1476,7 @@ function ChildWeeklyView({ player, checks, playerLoaded, onToggle, showToast, pt
     <div className="home-wrap">
       <div className="welcome-card">
         <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.18)",borderRadius:999,padding:"7px 12px",fontSize:13,fontWeight:900,letterSpacing:"0.04em",marginBottom:12}}>
-          📱 CHILD VERSION
+          📱 {(player?.name || 'Your child').split(' ')[0]}'s App
         </div>
         <h2>THIS WEEK'S CHALLENGE</h2>
         <div className="player-name">👤 {player.name}</div>
@@ -1540,7 +1569,7 @@ function HomeTab({ player, checks, pts, weeksDone, onNav, onToggle, showToast, w
         <WAConsentButton waConsent={waConsent} setWaConsent={setWaConsent} player={player} userEmail={userEmail} />
       </div>
       <div style={{textAlign:"center",marginTop:14,paddingBottom:8}}>
-        <button className="link-btn" style={{color:"var(--muted)",fontSize:13}} onClick={()=>sb.auth.signOut()}>Sign out</button>
+        <button className="link-btn" style={{color:"var(--muted)",fontSize:13}} onClick={handleSignOut}>Sign out</button>
       </div>
     </div>
   );
@@ -1844,7 +1873,7 @@ function PlanTab({ checks, onToggle, player, showToast }) {
 }
 
 
-function ShareProgressButton({ player, checks }) {
+function 📤 ShareProgressButton({ player, checks }) {
   const pts = totalPts(checks);
   const weeksDone = WEEKS.filter(w => weekPts(w, checks) === weekMaxPts(w)).length;
   const streak = computeStreak(checks);
@@ -2023,7 +2052,7 @@ function ProgressTab({ player, checks, isAdmin }) {
         )}
       </div>
 
-      <ShareProgressButton player={player} checks={checks} />
+      <📤 ShareProgressButton player={player} checks={checks} />
       <div style={{background:"white",borderRadius:14,padding:"14px",border:"1px solid #f0dede",width:"100%"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:14,color:"var(--dark)",letterSpacing:"0.04em",marginBottom:12}}>ACTIVITY LOG</div>
         {loading && <div style={{textAlign:"center",color:"var(--muted)",padding:"16px 0",fontSize:13}}>Loading…</div>}
@@ -2935,7 +2964,7 @@ function AdminTab({ allPlayers, onRefresh, showToast, currentSquad }) {
         })}
       </>}
       <div style={{marginTop:20,textAlign:"center"}}>
-        <button className="link-btn" onClick={()=>sb.auth.signOut()}>Sign out</button>
+        <button className="link-btn" onClick={handleSignOut}>Sign out</button>
       </div>
     </div>
   );
