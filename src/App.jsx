@@ -3,21 +3,26 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL      = "https://rzjaxsfqdajnncfdwemq.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_F7tdlTdu7-vYWkNynXW94g_mgzDZ-O_";
-const SUPER_ADMIN_EMAIL = null;
+const SUPER_ADMIN_EMAIL = "e.t.archbold@gmail.com";
 const COACH_EMAIL       = "Fingallians2015GirlsChallenge@gmail.com";
 const FORMSPREE_URL     = "https://formspree.io/f/mrewqpqo";
 const WHATSAPP_2015     = "https://chat.whatsapp.com/Bc76P9R4TJvHbbdQ2xEhhA";
 const WHATSAPP_2017     = "https://chat.whatsapp.com/CUeI5EKF8HOGo0hucgSEPF";
 
 // ── Squad config ─────────────────────────────────────────────────────────────
-const SQUAD = "2015";
+const SQUAD = "2017";
 const WHATSAPP_LINK = SQUAD === "2017" ? WHATSAPP_2017 : WHATSAPP_2015;
 const SQUAD_LABEL = SQUAD === "2017" ? "Fingallians 2017 Girls" : "Fingallians 2015 Girls";
 const SQUAD_SHORT = SQUAD === "2017" ? "2017 Girls" : "2015 Girls";
 
-const ADMIN_EMAILS = ["e.t.archbold@gmail.com"];
+const ADMIN_EMAILS = [
+  "e.t.archbold@gmail.com",
+  ...(SQUAD === "2017" ? ["lee@ssa.ie"] : []),
+];
 
-const ADMIN_PLAYER_NAMES = {};
+const ADMIN_PLAYER_NAMES = {
+  ...(SQUAD === "2017" ? { "lee@ssa.ie": "Rose Connolly" } : {}),
+};
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -669,15 +674,7 @@ export default function App() {
 
       const newChecks = { ...checks, [taskKey]: true };
       setChecks(newChecks);
-      // Fire confetti if week is now fully complete
-      const weekMatch2 = taskKey.match(/^w(\d+)-/);
-      if (weekMatch2) {
-        const wNum = parseInt(weekMatch2[1], 10);
-        const wData = WEEKS.find(w => w.week === wNum);
-        if (wData && weekPts(wData, newChecks) === weekMaxPts(wData)) {
-          setConfettiTrigger(t => t + 1);
-        }
-      }
+      setConfettiTrigger(t => t + 1);
       showToast(`✅ ${label} logged! +${pts} pts`);
       logAudit(session.user.email, player, "task_complete", label, null, `+${pts} pts`);
     }
@@ -1498,7 +1495,7 @@ function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToas
             {expandedSquad && (
               <div className="squad-body">
                 <p className="squad-desc">{w.squad.desc}</p>
-                <div className="squad-cta">👥 Get 3–4 girls together — this is your highest scoring task!</div>
+                <div className="squad-cta">👥 Get 3–4 girls together — squad sessions earn extra points! Don’t forget to send photos or short videos of your squad session to the WhatsApp group to claim the bonus.</div>
                 {/* Three drill videos for this week */}
                 <div style={{display:"flex",gap:8,marginBottom:12}}>
                   {[
