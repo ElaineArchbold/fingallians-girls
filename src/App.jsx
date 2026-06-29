@@ -1873,7 +1873,7 @@ function PlanTab({ checks, onToggle, player, showToast }) {
 }
 
 
-function 📤 ShareProgressButton({ player, checks }) {
+function ShareProgressButton({ player, checks }) {
   const pts = totalPts(checks);
   const weeksDone = WEEKS.filter(w => weekPts(w, checks) === weekMaxPts(w)).length;
   const streak = computeStreak(checks);
@@ -2052,7 +2052,7 @@ function ProgressTab({ player, checks, isAdmin }) {
         )}
       </div>
 
-      <📤 ShareProgressButton player={player} checks={checks} />
+      <ShareProgressButton player={player} checks={checks} />
       <div style={{background:"white",borderRadius:14,padding:"14px",border:"1px solid #f0dede",width:"100%"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:14,color:"var(--dark)",letterSpacing:"0.04em",marginBottom:12}}>ACTIVITY LOG</div>
         {loading && <div style={{textAlign:"center",color:"var(--muted)",padding:"16px 0",fontSize:13}}>Loading…</div>}
