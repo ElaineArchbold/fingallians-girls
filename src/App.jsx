@@ -714,7 +714,7 @@ export default function App() {
         .eq("player_id", player.id)
         .eq("task_key", taskKey);
       setChecks(c => { const n={...c}; delete n[taskKey]; return n; });
-      logAudit(isChildView ? "{(player?.name || 'Your child').split(' ')[0]}'s App" : session?.user?.email, player, "task_incomplete", `${label}${isChildView ? " marked incomplete from child view" : ""}`);
+      logAudit(isChildView ? "Child Version" : session?.user?.email, player, "task_incomplete", `${label}${isChildView ? " marked incomplete from child view" : ""}`);
     } else {
       await sb.from("task_completions")
         .delete()
@@ -737,7 +737,7 @@ export default function App() {
       setChecks(newChecks);
       setConfettiTrigger(t => t + 1);
       showToast(`✅ ${label} logged! +${pts} pts`);
-      logAudit(isChildView ? "{(player?.name || 'Your child').split(' ')[0]}'s App" : session?.user?.email, player, "task_complete", `${label}${isChildView ? " marked complete from child view" : ""}`, null, `+${pts} pts`);
+      logAudit(isChildView ? "Child Version" : session?.user?.email, player, "task_complete", `${label}${isChildView ? " marked complete from child view" : ""}`, null, `+${pts} pts`);
     }
   }
 
@@ -966,7 +966,7 @@ function AuthScreen({ showToast }) {
         <div className="card-bd">
           {err && <div className="err">{err}</div>}
           <label className="lbl">Email</label>
-          <input className="inp" type="email" name="email" autoComplete="username" inputMode="email" placeholder="your@email.com" value={email} onChange={e= id="email" autoCapitalize="none" spellCheck={false}>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
+          <input className="inp" type="email" name="email" autoComplete="username" inputMode="email" placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
           <label className="lbl">Password</label>
           <div style={{position:"relative",marginBottom:0}}>
             <input className="inp" type={showPw?"text":"password"} name={mode === "login" ? "current-password" : "new-password"} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="••••••••" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} style={{marginBottom:13,paddingRight:44}} />
@@ -1380,7 +1380,7 @@ function ChildVersionBox({ player, showToast }) {
 
       const link = `${window.location.origin}${window.location.pathname}?child=${nextToken}`;
       await navigator.clipboard.writeText(link);
-      showToast("📱 {(player?.name || 'Your child').split(' ')[0]}'s App link copied!");
+      showToast("📱 Child Version link copied!");
     } catch (e) {
       console.error("Child link error:", e);
       showToast("❌ Could not create the child link. Check Supabase setup and try again.");
@@ -1407,13 +1407,13 @@ function ChildVersionBox({ player, showToast }) {
       const link = `${window.location.origin}${window.location.pathname}?child=${nextToken}`;
       if (navigator.share) {
         await navigator.share({
-          title: "Fingallians {(player?.name || 'Your child').split(' ')[0]}'s App",
+          title: "Fingallians Child Version",
           text: `${player?.name || "Player"}'s child-friendly challenge view`,
           url: link
         });
       } else {
         await navigator.clipboard.writeText(link);
-        showToast("📱 {(player?.name || 'Your child').split(' ')[0]}'s App link copied!");
+        showToast("📱 Child Version link copied!");
       }
     } catch (e) {
       console.error("Child share error:", e);
@@ -1465,7 +1465,7 @@ function ChildWeeklyView({ player, checks, playerLoaded, onToggle, showToast, pt
           <div className="card-bd" style={{textAlign:"center",padding:"28px 20px"}}>
             <div style={{fontSize:52,marginBottom:12}}>🔗</div>
             <h2 style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:28,color:"var(--g)",margin:"0 0 8px"}}>Link not found</h2>
-            <p style={{fontSize:14,color:"var(--mid)",lineHeight:1.6}}>This {(player?.name || 'Your child').split(' ')[0]}'s App link is not active. Ask your parent or guardian to create a new link from the parent version of the app.</p>
+            <p style={{fontSize:14,color:"var(--mid)",lineHeight:1.6}}>This Child Version link is not active. Ask your parent or guardian to create a new link from the parent version of the app.</p>
           </div>
         </div>
       </div>
@@ -1476,7 +1476,7 @@ function ChildWeeklyView({ player, checks, playerLoaded, onToggle, showToast, pt
     <div className="home-wrap">
       <div className="welcome-card">
         <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.18)",borderRadius:999,padding:"7px 12px",fontSize:13,fontWeight:900,letterSpacing:"0.04em",marginBottom:12}}>
-          📱 {(player?.name || 'Your child').split(' ')[0]}'s App
+          📱 CHILD VERSION
         </div>
         <h2>THIS WEEK'S CHALLENGE</h2>
         <div className="player-name">👤 {player.name}</div>
