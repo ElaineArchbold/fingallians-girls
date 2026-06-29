@@ -709,7 +709,7 @@ const [confettiTrigger, setConfettiTrigger] = useState(0);
   async function toggleTask(taskKey, pts, label) {
     if (!player) return;
     const weekMatch = taskKey.match(/^w(\d+)-/);
-    if (weekMatch && session?.user?.email !== SUPER_ADMIN_EMAIL) {
+    if (weekMatch && !isChildView && session?.user?.email !== SUPER_ADMIN_EMAIL) {
       const weekNum  = parseInt(weekMatch[1], 10);
       const weekStart = new Date("2026-06-29");
       weekStart.setDate(weekStart.getDate() + (weekNum - 1) * 7);
@@ -719,14 +719,43 @@ const [confettiTrigger, setConfettiTrigger] = useState(0);
         return;
       }
     }
+
     const done = checks[taskKey];
+    const nextComplete = !done;
+
+    if (isChildView) {
+      const { error } = await sb.rpc("child_set_task_completion", {
+        p_child_access_token: childAccessToken,
+        p_task_key: taskKey,
+        p_complete: nextComplete
+      });
+
+      if (error) {
+        console.error("Child task completion failed", error);
+        showToast("❌ Could not save that activity — please try again.");
+        return;
+      }
+
+      if (nextComplete) {
+        setChecks(c => ({ ...c, [taskKey]: true }));
+        setConfettiTrigger(t => t + 1);
+        showToast(`✅ ${label} logged! +${pts} pts`);
+      } else {
+        setChecks(c => { const n={...c}; delete n[taskKey]; return n; });
+        showToast(`↩️ ${label} removed`);
+      }
+
+      logAudit("Child Version", player, nextComplete ? "task_complete" : "task_incomplete", `${label} ${nextComplete ? "marked complete" : "marked incomplete"} from child app`, null, nextComplete ? `+${pts} pts` : null);
+      return;
+    }
+
     if (done) {
       await sb.from("task_completions")
         .delete()
         .eq("player_id", player.id)
         .eq("task_key", taskKey);
       setChecks(c => { const n={...c}; delete n[taskKey]; return n; });
-      logAudit(isChildView ? "Child Version" : session?.user?.email, player, "task_incomplete", `${label}${isChildView ? " marked incomplete from child view" : ""}`);
+      logAudit(session?.user?.email, player, "task_incomplete", label);
     } else {
       await sb.from("task_completions")
         .delete()
@@ -749,7 +778,7 @@ const [confettiTrigger, setConfettiTrigger] = useState(0);
       setChecks(newChecks);
       setConfettiTrigger(t => t + 1);
       showToast(`✅ ${label} logged! +${pts} pts`);
-      logAudit(isChildView ? "Child Version" : session?.user?.email, player, "task_complete", `${label}${isChildView ? " marked complete from child view" : ""}`, null, `+${pts} pts`);
+      logAudit(session?.user?.email, player, "task_complete", label, null, `+${pts} pts`);
     }
   }
 
