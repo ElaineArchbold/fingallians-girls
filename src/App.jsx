@@ -2302,7 +2302,9 @@ function AdminProgressSnapshot({ allPlayers }) {
           });
           w.skills.forEach(s => { if (isApproved(c[skillKey(w.week,s.id)])) { sessions++; minutes += 20; } });
           w.speed.forEach(s => { if (isApproved(c[speedKey(w.week,s.id)])) { sessions++; minutes += 10; } });
-          if (isApproved(c[squadKey(w.week)])) { sessions++; minutes += 20; }
+          // Squad Sessions are bonus approvals, not training sessions for the Sessions Logged / Minutes Active boxes.
+          // They still count for points via totalPts(c).
+          if (isApproved(c[squadKey(w.week)])) { /* bonus only */ }
         });
         return { ...p, checks:c, sessions, minutes, pts:totalPts(c), totalKm };
       }).sort((a,b)=>b.pts-a.pts));
@@ -2374,7 +2376,7 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
   const stats = useMemo(() => {
     let sessions = 0, minutes = 0, pts = 0;
     let totalKm = 0;
-    const runMins = 20, skillMins = 20, squadMins = 20;
+    const runMins = 20, skillMins = 20;
     WEEKS.forEach(w => {
       w.runs.forEach((r, i) => {
         if (checks[runKey(w.week, i)]) {
@@ -2388,7 +2390,9 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
       w.speed.forEach(s => {
         if (checks[speedKey(w.week, s.id)]) { sessions++; minutes += 10; pts += PTS.speed; }
       });
-      if (checks[squadKey(w.week)]) { sessions++; minutes += squadMins; pts += PTS.squad; }
+      // Squad Sessions are bonus approvals, not training sessions for the Sessions Logged / Minutes Active boxes.
+      // They still count for points.
+      if (isApproved(checks[squadKey(w.week)])) { pts += PTS.squad; }
     });
     return { sessions, minutes, pts, totalKm };
   }, [checks]);
@@ -2426,7 +2430,7 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
         ? new Date(c.completed_at).toLocaleDateString("en-IE", { day:"numeric", month:"short", year:"numeric" })
         : null;
       return { label, type, week, date, key: k };
-    }).filter(a => a.label);
+    }).filter(a => a.label && a.type !== "squad");
   }, [completions]);
 
   const typeStyle = {
@@ -2480,7 +2484,7 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
       <div style={{background:"white",borderRadius:14,padding:"14px",marginBottom:14,border:"1px solid #f0dede",width:"100%"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:14,color:"var(--dark)",letterSpacing:"0.04em",marginBottom:12}}>WEEKLY ACTIVITY</div>
         <div style={{display:"flex",gap:12,marginBottom:10,flexWrap:"wrap"}}>
-          {[["var(--g)","Runs"],["#2e7d32","Skills"],["#7b1fa2","Speed"],["#c45e00","Squad"]].map(([c,l]) => (
+          {[["var(--g)","Runs"],["#2e7d32","Skills"],["#7b1fa2","Speed"]].map(([c,l]) => (
             <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
               <div style={{width:10,height:10,borderRadius:2,background:c,flexShrink:0}}/>
               <span style={{fontSize:10,color:"var(--muted)"}}>{l}</span>
