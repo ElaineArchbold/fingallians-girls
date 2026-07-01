@@ -163,8 +163,10 @@ const runKey   = (week, n)  => `w${week}-run${n}`;
 const skillKey = (week, id) => `w${week}-skill-${id}`;
 const speedKey = (week, id) => `w${week}-speed-${id}`;
 const squadKey = (week)     => `w${week}-squad`;
+const fridayKey = (week)     => `w${week}-friday-hurling`;
+const isApprovalBonusKey = (taskKey) => /^w\d+-(squad|friday-hurling)$/.test(taskKey);
 
-const PTS = { run:3, skill:2, speed:2, squad:4 };
+const PTS = { run:3, skill:2, speed:2, squad:4, friday:4 };
 
 const isApproved = (v) => v === true || v === "approved";
 const isPending  = (v) => v === "pending";
@@ -177,6 +179,7 @@ function totalPts(checks) {
     w.skills.forEach(s    => { if(isApproved(checks[skillKey(w.week,s.id)])) p+=PTS.skill; });
     w.speed.forEach(s     => { if(isApproved(checks[speedKey(w.week,s.id)])) p+=PTS.speed; });
     if(isApproved(checks[squadKey(w.week)])) p+=PTS.squad;
+    if(isApproved(checks[fridayKey(w.week)])) p+=PTS.friday;
   });
   return p;
 }
@@ -187,11 +190,12 @@ function weekPts(w, checks) {
   w.skills.forEach(s   => { if(isApproved(checks[skillKey(w.week,s.id)])) p+=PTS.skill; });
   w.speed.forEach(s    => { if(isApproved(checks[speedKey(w.week,s.id)])) p+=PTS.speed; });
   if(isApproved(checks[squadKey(w.week)])) p+=PTS.squad;
+  if(isApproved(checks[fridayKey(w.week)])) p+=PTS.friday;
   return p;
 }
 
 function weekMaxPts(w) {
-  return w.runs.length*PTS.run + w.skills.length*PTS.skill + w.speed.length*PTS.speed + PTS.squad;
+  return w.runs.length*PTS.run + w.skills.length*PTS.skill + w.speed.length*PTS.speed + PTS.squad + PTS.friday;
 }
 
 function playerActivitySummary(checks) {
@@ -200,6 +204,7 @@ function playerActivitySummary(checks) {
     skillsDone: 0, skillsTotal: 0,
     speedDone: 0, speedTotal: 0,
     squadApproved: 0, squadPending: 0, squadReturned: 0, squadTotal: WEEKS.length,
+    fridayApproved: 0, fridayPending: 0, fridayReturned: 0, fridayTotal: WEEKS.length,
     approvedCount: 0, pendingCount: 0,
   };
 
@@ -252,6 +257,20 @@ function playerActivitySummary(checks) {
       returned.push("Squad Session returned");
     }
 
+    const fridayState = checks[fridayKey(w.week)];
+    if (isApproved(fridayState)) {
+      summary.fridayApproved += 1;
+      summary.approvedCount += 1;
+      approved.push("Friday Night Hurling");
+    } else if (isPending(fridayState)) {
+      summary.fridayPending += 1;
+      summary.pendingCount += 1;
+      pending.push("Friday Night Hurling awaiting approval");
+    } else if (isRejected(fridayState)) {
+      summary.fridayReturned += 1;
+      returned.push("Friday Night Hurling returned");
+    }
+
     return { week: w.week, dates: w.dates, approved, pending, returned };
   }).filter(w => w.approved.length || w.pending.length || w.returned.length);
 
@@ -275,6 +294,7 @@ function PlayerActivityModal({ player, checks, points, maxPossible, onClose }) {
     { label:"Skills", done:summary.skillsDone, total:summary.skillsTotal },
     { label:"Speed", done:summary.speedDone, total:summary.speedTotal },
     { label:"Squad", done:summary.squadApproved, total:summary.squadTotal },
+    { label:"Friday Hurling", done:summary.fridayApproved, total:summary.fridayTotal },
   ];
 
   return (
@@ -310,9 +330,9 @@ function PlayerActivityModal({ player, checks, points, maxPossible, onClose }) {
               </div>
             ))}
 
-            {(summary.squadPending > 0 || summary.squadReturned > 0) && (
+            {(summary.squadPending > 0 || summary.squadReturned > 0 || summary.fridayPending > 0 || summary.fridayReturned > 0) && (
               <div style={{fontSize:11,color:"var(--muted)",marginTop:8,lineHeight:1.5}}>
-                🟠 {summary.squadPending} awaiting approval · ↺ {summary.squadReturned} returned
+                🟠 {summary.squadPending + summary.fridayPending} awaiting approval · ↺ {summary.squadReturned + summary.fridayReturned} returned
               </div>
             )}
           </div>
@@ -487,11 +507,12 @@ body{font-family:'Lato',sans-serif;background:var(--bg);color:var(--dark);min-he
 .mark-undone{background:#eee;color:var(--mid)}
 .mark-undone:hover{background:#e0e0e0}
 .squad-card{background:linear-gradient(135deg,#7d1018 0%,var(--g) 100%);border-radius:var(--radius);box-shadow:var(--shadow-lg);margin-bottom:12px;overflow:hidden}
-.squad-hd{display:flex;align-items:center;gap:12px;padding:16px 18px;cursor:pointer;user-select:none}
-.squad-icon{font-size:26px;flex-shrink:0}
-.squad-hd-text .squad-type{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:0.08em;color:rgba(255,255,255,0.6)}
-.squad-hd-text .squad-name{font-family:'Barlow Condensed',sans-serif;font-size:20px;color:white;letter-spacing:0.02em}
-.squad-pts{font-size:12px;font-weight:900;color:var(--dark);background:var(--gold);padding:3px 10px;border-radius:10px;flex-shrink:0}
+.squad-hd{display:grid;grid-template-columns:34px 1fr 70px 24px;align-items:center;gap:10px;padding:16px 18px;cursor:pointer;user-select:none}
+.squad-icon{font-size:28px;line-height:1;text-align:center;margin-bottom:4px}
+.squad-hd-text{text-align:center;min-width:0}
+.squad-hd-text .squad-type{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:0.08em;color:rgba(255,255,255,0.68);line-height:1.25}
+.squad-hd-text .squad-name{font-family:'Barlow Condensed',sans-serif;font-size:22px;color:white;letter-spacing:0.02em;line-height:1.05}
+.squad-pts{font-size:12px;font-weight:900;color:var(--dark);background:var(--gold);padding:4px 8px;border-radius:10px;text-align:center;justify-self:end;white-space:nowrap}
 .squad-body{border-top:1px solid rgba(255,255,255,0.12);padding:14px 18px}
 .squad-desc{font-size:13px;color:rgba(255,255,255,0.85);line-height:1.6;margin-bottom:14px}
 .squad-cta{font-size:12px;color:var(--gold2);font-weight:700;margin-bottom:12px}
@@ -512,7 +533,7 @@ body{font-family:'Lato',sans-serif;background:var(--bg);color:var(--dark);min-he
 .prog-mini{height:4px;border-radius:2px;background:#f0dede;overflow:hidden;margin-top:4px}
 .prog-mini-fill{height:100%;border-radius:2px;background:var(--g)}
 .add-form{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;margin-bottom:14px}
-.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--g);color:white;padding:10px 22px;border-radius:24px;font-weight:700;font-size:14px;box-shadow:0 6px 28px rgba(163,22,33,0.35);z-index:9999;white-space:nowrap;pointer-events:none;animation:tin 0.25s ease}
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--g);color:white;padding:10px 18px;border-radius:24px;font-weight:700;font-size:14px;box-shadow:0 6px 28px rgba(163,22,33,0.35);z-index:9999;white-space:normal;pointer-events:none;animation:tin 0.25s ease;max-width:calc(100vw - 32px);width:max-content;text-align:center;line-height:1.35;box-sizing:border-box}
 @keyframes tin{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 
 @keyframes confetti-fall{0%{transform:translateY(-10px) rotate(0deg);opacity:1}100%{transform:translateY(100vh) rotate(720deg);opacity:0}}
@@ -1152,7 +1173,9 @@ export default function App() {
   async function toggleTask(taskKey, pts, label) {
     if (!player) return;
 
+    const isApprovalBonus = isApprovalBonusKey(taskKey);
     const isSquadSession = /^w\d+-squad$/.test(taskKey);
+    const isFridayHurling = /^w\d+-friday-hurling$/.test(taskKey);
 
     const weekMatch = taskKey.match(/^w(\d+)-/);
     if (weekMatch && !isChildView && session?.user?.email !== SUPER_ADMIN_EMAIL) {
@@ -1172,7 +1195,7 @@ export default function App() {
     const nextComplete = returned ? true : !done;
 
     if (isChildView) {
-      if (isSquadSession) {
+      if (isApprovalBonus) {
         const { error } = await sb.rpc("child_submit_task_completion", {
           p_child_access_token: childToken,
           p_task_key: taskKey,
@@ -1181,18 +1204,20 @@ export default function App() {
         });
 
         if (error) {
-          console.error("Child squad submission failed", error);
-          showToast("❌ Could not submit that squad session — please try again.");
+          console.error("Child approval submission failed", error);
+          showToast("❌ Could not submit that activity — please try again.");
           return;
         }
 
         if (nextComplete) {
           setChecks(c => ({ ...c, [taskKey]: "pending" }));
-          showToast("🏅 Squad Session submitted! Ask a parent to share proof in WhatsApp. Points appear once approved.");
+          showToast(isFridayHurling
+            ? "🏑 Friday Night Hurling submitted! We'll check attendance with the coaches and approve once confirmed."
+            : "🏅 Squad Session submitted! Ask a parent to share proof in WhatsApp. Points appear once approved.");
           logAudit("Child Version", player, "bonus_pending", `${label} submitted for approval from child app`, null, "pending");
         } else {
           setChecks(c => { const n={...c}; delete n[taskKey]; return n; });
-          showToast("↩️ Squad Session submission removed");
+          showToast("↩️ Submission removed");
           logAudit("Child Version", player, "bonus_removed", `${label} pending submission removed from child app`);
         }
         return;
@@ -1236,14 +1261,14 @@ export default function App() {
         .eq("player_id", player.id)
         .eq("task_key", taskKey);
       setChecks(c => { const n={...c}; delete n[taskKey]; return n; });
-      logAudit(session.user.email, player, isSquadSession ? "bonus_removed" : "task_incomplete", label);
+      logAudit(session.user.email, player, isApprovalBonus ? "bonus_removed" : "task_incomplete", label);
     } else {
       await sb.from("task_completions")
         .delete()
         .eq("player_id", player.id)
         .eq("task_key", taskKey);
 
-      const nextStatus = isSquadSession ? "pending" : "approved";
+      const nextStatus = isApprovalBonus ? "pending" : "approved";
       const { error: insertError } = await sb.from("task_completions").insert({
         player_id: player.id,
         task_key: taskKey,
@@ -1259,8 +1284,10 @@ export default function App() {
 
       setChecks(c => ({ ...c, [taskKey]: nextStatus }));
 
-      if (isSquadSession) {
-        showToast("🏅 Squad Session submitted! Ask a parent to share proof in WhatsApp. Points appear once approved.");
+      if (isApprovalBonus) {
+        showToast(isFridayHurling
+          ? "🏑 Friday Night Hurling submitted! We'll check attendance with the coaches and approve once confirmed."
+          : "🏅 Squad Session submitted! Ask a parent to share proof in WhatsApp. Points appear once approved.");
         logAudit(session.user.email, player, "bonus_pending", `${label} submitted for approval`, null, "pending");
       } else {
         setConfettiTrigger(t => t + 1);
@@ -2002,6 +2029,7 @@ function WeekCountdown({ weekNum }) {
 function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToast }) {
   const [expandedSkill, setExpandedSkill] = useState(null);
   const [expandedSquad, setExpandedSquad] = useState(false);
+  const [expandedFriday, setExpandedFriday] = useState(false);
   const [playingVideo, setPlayingVideo]   = useState(null);
   const canToggle = !!player;
   const squadVideos = [
@@ -2133,15 +2161,15 @@ function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToas
                   if(expandedSquad && !done && !pending && !returned) showToast("💪 Don't forget to submit your Squad Session if you completed this!");
                   setExpandedSquad(v=>!v);
                 }}>{done?"✓":pending?"…":returned?"↺":""}</div>
-              <div className="squad-icon">👥</div>
               <div className="squad-hd-text">
-                <div className="squad-type">
-                  Squad Session · +{PTS.squad} pts {pending ? "· Awaiting approval" : returned ? "· Returned" : ""}
-                </div>
+                <div className="squad-icon">👥</div>
                 <div className="squad-name">{w.squad.label}</div>
+                <div className="squad-type">
+                  +{PTS.squad} pts {pending ? "· Awaiting approval" : returned ? "· Returned" : ""}
+                </div>
               </div>
               <div className="squad-pts">{pending ? "Pending" : returned ? "Returned" : `+${PTS.squad}`}</div>
-              <div style={{fontSize:18,color:"rgba(255,255,255,0.5)",transition:"transform 0.2s",transform:expandedSquad?"rotate(180deg)":"none"}}>⌄</div>
+              <div style={{fontSize:20,color:"rgba(255,255,255,0.65)",transition:"transform 0.2s",transform:expandedSquad?"rotate(180deg)":"none",justifySelf:"end"}}>⌄</div>
             </div>
             {expandedSquad && (
               <div className="squad-body">
@@ -2191,6 +2219,48 @@ function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToas
 
                 {canToggle && (
                   <button className={`squad-mark${done?" done":""}`} onClick={()=>onToggle(k,PTS.squad,w.squad.label)}>
+                    {pending ? "AWAITING APPROVAL" : returned ? "↺ SUBMIT AGAIN" : done ? "✕ REMOVE" : "✓ SUBMIT FOR APPROVAL"}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {(() => {
+        const k = fridayKey(w.week);
+        const done = isApproved(checks[k]);
+        const pending = isPending(checks[k]);
+        const returned = isRejected(checks[k]);
+        return (
+          <div className="squad-card" style={{background:"linear-gradient(135deg,#0b6623 0%,#1e6b2e 100%)"}}>
+            <div className="squad-hd" onClick={() => setExpandedFriday(v => !v)}>
+              <div className={`skill-check${done?" done":""}`} style={{flexShrink:0,cursor:"pointer",borderColor:pending?"#f5a623":returned?"#e65100":undefined,background:pending?"#fff3e0":returned?"#ffebee":undefined,color:pending?"#e65100":returned?"#c62828":undefined}}
+                onClick={e=>{e.stopPropagation(); setExpandedFriday(v=>!v);}}>
+                {done?"✓":pending?"…":returned?"↺":""}
+              </div>
+              <div className="squad-hd-text">
+                <div className="squad-icon">🏑</div>
+                <div className="squad-name">Friday Night Hurling</div>
+                <div className="squad-type">
+                  +{PTS.friday} pts {pending ? "· Awaiting approval" : returned ? "· Returned" : ""}
+                </div>
+              </div>
+              <div className="squad-pts">{pending ? "Pending" : returned ? "Returned" : `+${PTS.friday}`}</div>
+              <div style={{fontSize:20,color:"rgba(255,255,255,0.65)",transition:"transform 0.2s",transform:expandedFriday?"rotate(180deg)":"none",justifySelf:"end"}}>⌄</div>
+            </div>
+            {expandedFriday && (
+              <div className="squad-body">
+                <p className="squad-desc">Did you attend Friday Night Hurling this week?</p>
+                <div className="squad-cta">🏑 Submit this for approval. We'll check with the coaches and approve once you've been marked present.</div>
+                {returned && (
+                  <div style={{background:"#ffebee",border:"1px solid #ffcdd2",color:"#c62828",borderRadius:10,padding:"10px 12px",fontSize:13,fontWeight:800,marginBottom:12}}>
+                    ↺ Returned by admin — please check with the coaches and submit again if needed.
+                  </div>
+                )}
+                {canToggle && (
+                  <button className={`squad-mark${done?" done":""}`} onClick={()=>onToggle(k,PTS.friday,"Friday Night Hurling")}>
                     {pending ? "AWAITING APPROVAL" : returned ? "↺ SUBMIT AGAIN" : done ? "✕ REMOVE" : "✓ SUBMIT FOR APPROVAL"}
                   </button>
                 )}
@@ -2361,7 +2431,8 @@ function AdminProgressSnapshot({ allPlayers }) {
           w.speed.forEach(s => { if (isApproved(c[speedKey(w.week,s.id)])) { sessions++; minutes += 10; } });
           // Squad Sessions are bonus approvals, not training sessions for the Sessions Logged / Minutes Active boxes.
           // They still count for points via totalPts(c).
-          if (isApproved(c[squadKey(w.week)])) { /* bonus only */ }
+          if (isApproved(c[squadKey(w.week)])) { sessions++; minutes += 20; }
+          if (isApproved(c[fridayKey(w.week)])) { sessions++; minutes += 20; }
         });
         return { ...p, checks:c, sessions, minutes, pts:totalPts(c), totalKm };
       }).sort((a,b)=>b.pts-a.pts));
@@ -2395,14 +2466,14 @@ function AdminProgressSnapshot({ allPlayers }) {
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
               {[
-                { label:"Sessions\\nLogged", value:p.sessions, suffix:"", icon:"✅", color:"var(--g)" },
-                { label:"Minutes\\nActive", value:p.minutes, suffix:" min", icon:"⏱", color:"#2e7d32" },
-                { label:"Total\\nPoints", value:p.pts, suffix:" pts", icon:"⭐", color:"#b8860b" },
+                { label:"Sessions Logged", value:p.sessions, suffix:"", icon:"✅", color:"var(--g)" },
+                { label:"Minutes Active", value:p.minutes, suffix:" min", icon:"⏱", color:"#2e7d32" },
+                { label:"Total Points", value:p.pts, suffix:" pts", icon:"⭐", color:"#b8860b" },
               ].map(s => (
                 <div key={s.label} style={{background:"#fdfafa",borderRadius:12,padding:"10px 6px",textAlign:"center",border:"1px solid #f0dede"}}>
                   <div style={{fontSize:18}}>{s.icon}</div>
                   <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:24,color:s.color,lineHeight:1,marginTop:3}}>{s.value}{s.suffix}</div>
-                  <div style={{fontSize:9,color:"var(--muted)",whiteSpace:"pre-line",lineHeight:1.2,marginTop:3}}>{s.label}</div>
+                  <div style={{fontSize:9,color:"var(--muted)",lineHeight:1.2,marginTop:3}}>{s.label}</div>
                 </div>
               ))}
             </div>
@@ -2436,34 +2507,36 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
     const runMins = 20, skillMins = 20;
     WEEKS.forEach(w => {
       w.runs.forEach((r, i) => {
-        if (checks[runKey(w.week, i)]) {
+        if (isApproved(checks[runKey(w.week, i)])) {
           sessions++; minutes += runMins; pts += PTS.run;
           totalKm += parseFloat(r.distance) || 0;
         }
       });
       w.skills.forEach(s => {
-        if (checks[skillKey(w.week, s.id)]) { sessions++; minutes += skillMins; pts += PTS.skill; }
+        if (isApproved(checks[skillKey(w.week, s.id)])) { sessions++; minutes += skillMins; pts += PTS.skill; }
       });
       w.speed.forEach(s => {
-        if (checks[speedKey(w.week, s.id)]) { sessions++; minutes += 10; pts += PTS.speed; }
+        if (isApproved(checks[speedKey(w.week, s.id)])) { sessions++; minutes += 10; pts += PTS.speed; }
       });
       // Squad Sessions are bonus approvals, not training sessions for the Sessions Logged / Minutes Active boxes.
       // They still count for points.
-      if (isApproved(checks[squadKey(w.week)])) { pts += PTS.squad; }
+      if (isApproved(checks[squadKey(w.week)])) { sessions++; minutes += 20; pts += PTS.squad; }
+      if (isApproved(checks[fridayKey(w.week)])) { sessions++; minutes += 20; pts += PTS.friday; }
     });
     return { sessions, minutes, pts, totalKm };
   }, [checks]);
 
   const weeklyData = useMemo(() => {
     return WEEKS.map(w => {
-      let runs = 0, skills = 0, speed = 0, squad = 0;
-      w.runs.forEach((_, i) => { if (checks[runKey(w.week, i)]) runs++; });
-      w.skills.forEach(s => { if (checks[skillKey(w.week, s.id)]) skills++; });
-      w.speed.forEach(s => { if (checks[speedKey(w.week, s.id)]) speed++; });
-      if (checks[squadKey(w.week)]) squad = 1;
-      const total = runs + skills + speed + squad;
-      const maxPoss = w.runs.length + w.skills.length + w.speed.length + 1;
-      return { week: w.week, runs, skills, speed, squad, total, maxPoss };
+      let runs = 0, skills = 0, speed = 0, squad = 0, friday = 0;
+      w.runs.forEach((_, i) => { if (isApproved(checks[runKey(w.week, i)])) runs++; });
+      w.skills.forEach(s => { if (isApproved(checks[skillKey(w.week, s.id)])) skills++; });
+      w.speed.forEach(s => { if (isApproved(checks[speedKey(w.week, s.id)])) speed++; });
+      if (isApproved(checks[squadKey(w.week)])) squad = 1;
+      if (isApproved(checks[fridayKey(w.week)])) friday = 1;
+      const total = runs + skills + speed + squad + friday;
+      const maxPoss = w.runs.length + w.skills.length + w.speed.length + 2;
+      return { week: w.week, runs, skills, speed, squad, friday, total, maxPoss };
     });
   }, [checks]);
 
@@ -2482,12 +2555,13 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
           if (speedKey(w.week, s.id) === k) { label = s.label.replace(/^[^\w]+/, "").split(":")[0].trim(); type = "speed"; week = w.week; }
         });
         if (squadKey(w.week) === k) { label = `Squad Session`; type = "squad"; week = w.week; }
+        if (fridayKey(w.week) === k) { label = `Friday Night Hurling`; type = "friday"; week = w.week; }
       });
       const date = c.completed_at
         ? new Date(c.completed_at).toLocaleDateString("en-IE", { day:"numeric", month:"short", year:"numeric" })
         : null;
       return { label, type, week, date, key: k };
-    }).filter(a => a.label && a.type !== "squad");
+    }).filter(a => a.label);
   }, [completions]);
 
   const typeStyle = {
@@ -2495,6 +2569,7 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
     skill: { color:"#2e7d32",   bg:"#e8f5e9",    icon:"🏑" },
     speed: { color:"#7b1fa2",   bg:"#f3e5f5",    icon:"⚡" },
     squad: { color:"#c45e00",   bg:"#fff3e0",    icon:"👥" },
+    friday: { color:"#0b6623",   bg:"#e8f5e9",    icon:"🏑" },
   };
 
   const maxWeekActivity = Math.max(...weeklyData.map(w => w.maxPoss), 1);
@@ -2524,16 +2599,16 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16,width:"100%"}}>
         {[
-          { label:"Sessions\nLogged", value: stats.sessions, suffix:"",     color:"var(--g)", icon:"✅" },
-          { label:"Minutes\nActive",  value: stats.minutes,  suffix:" min", color:"#2e7d32",  icon:"⏱" },
-          { label:"Total\nPoints",    value: stats.pts,      suffix:" pts", color:"#b8860b",  icon:"⭐" },
+          { label:"Sessions Logged", value: stats.sessions, suffix:"",     color:"var(--g)", icon:"✅" },
+          { label:"Minutes Active",  value: stats.minutes,  suffix:" min", color:"#2e7d32",  icon:"⏱" },
+          { label:"Total Points",    value: stats.pts,      suffix:" pts", color:"#b8860b",  icon:"⭐" },
         ].map(s => (
           <div key={s.label} style={{background:"white",borderRadius:12,padding:"12px 8px",textAlign:"center",border:"1px solid #f0dede"}}>
             <div style={{fontSize:20}}>{s.icon}</div>
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:28,color:s.color,lineHeight:1,marginTop:4}}>
               {s.value}{s.suffix}
             </div>
-            <div style={{fontSize:10,color:"var(--muted)",marginTop:3,whiteSpace:"pre-line",lineHeight:1.3}}>{s.label}</div>
+            <div style={{fontSize:10,color:"var(--muted)",marginTop:3,lineHeight:1.3}}>{s.label}</div>
           </div>
         ))}
       </div>
@@ -2555,11 +2630,13 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
             const skillH = (w.skills / w.total || 0) * barH;
             const speedH = (w.speed  / w.total || 0) * barH;
             const squadH = (w.squad  / w.total || 0) * barH;
+            const fridayH = (w.friday / w.total || 0) * barH;
             const allDone = w.total === w.maxPoss;
             return (
               <div key={w.week} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
                 <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:72,gap:1}}>
-                  {w.squad > 0 && <div style={{width:"100%",height:Math.max(squadH,2),background:"#c45e00",borderRadius:"2px 2px 0 0",minHeight:3}}/>}
+                  {w.friday > 0 && <div style={{width:"100%",height:Math.max(fridayH,2),background:"#0b6623",borderRadius:"2px 2px 0 0",minHeight:3}}/>}
+                  {w.squad > 0 && <div style={{width:"100%",height:Math.max(squadH,2),background:"#c45e00",borderRadius:w.friday===0?"2px 2px 0 0":0,minHeight:3}}/>}
                   {w.speed > 0 && <div style={{width:"100%",height:Math.max(speedH,2),background:"#7b1fa2",minHeight:3}}/>}
                   {w.skills > 0 && <div style={{width:"100%",height:Math.max(skillH,2),background:"#2e7d32",minHeight:3}}/>}
                   {w.runs > 0 && <div style={{width:"100%",height:Math.max(runH,2),background:"var(--g)",borderRadius:w.skills===0&&w.squad===0?"2px 2px 0 0":0,minHeight:3}}/>}
@@ -3395,11 +3472,13 @@ function DashboardTab({ allPlayers, onRefresh, showToast }) {
       const playersById = {};
       allPlayers.forEach(p => { playersById[p.id] = p; });
       setPendingBonus((comps || [])
-        .filter(r => r.status === "pending" && /^w\d+-squad$/.test(r.task_key))
+        .filter(r => r.status === "pending" && /^w\d+-(squad|friday-hurling)$/.test(r.task_key))
         .map(r => ({
           ...r,
           player_name: playersById[r.player_id]?.name || "Unknown player",
-          week: (r.task_key.match(/^w(\d+)-/) || [null, "?"])[1]
+          week: (r.task_key.match(/^w(\d+)-/) || [null, "?"])[1],
+          activity_label: /friday-hurling$/.test(r.task_key) ? "Friday Night Hurling" : "Squad Session",
+          points: /friday-hurling$/.test(r.task_key) ? PTS.friday : PTS.squad
         }))
         .sort((a,b) => new Date(b.completed_at || 0) - new Date(a.completed_at || 0)));
 
@@ -3408,7 +3487,7 @@ function DashboardTab({ allPlayers, onRefresh, showToast }) {
       setRecentLog((logs || []).filter(r => !r.squad || r.squad === APP_SQUAD).slice(0, 20));
 
       const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate()-7);
-      const validComps = (comps || []).filter(r => r.status !== "rejected");
+      const validComps = (comps || []).filter(r => r.status === "approved" || !r.status);
       const recentSessionRows = validComps
         .filter(r => r.completed_at && new Date(r.completed_at) > weekAgo)
         .sort((a,b) => new Date(b.completed_at || 0) - new Date(a.completed_at || 0));
@@ -3517,6 +3596,8 @@ function DashboardTab({ allPlayers, onRefresh, showToast }) {
   function dashboardTaskLabel(taskKey) {
     const squadMatch = String(taskKey || "").match(/^w(\d+)-squad$/);
     if (squadMatch) return `Week ${squadMatch[1]} - Squad Session`;
+    const fridayMatch = String(taskKey || "").match(/^w(\d+)-friday-hurling$/);
+    if (fridayMatch) return `Week ${fridayMatch[1]} - Friday Night Hurling`;
 
     const runMatch = String(taskKey || "").match(/^w(\d+)-run(\d+)$/);
     if (runMatch) {
@@ -3659,7 +3740,7 @@ function DashboardTab({ allPlayers, onRefresh, showToast }) {
       SUPER_ADMIN_EMAIL,
       player,
       decision === "approved" ? "bonus_approved" : "bonus_returned",
-      `Week ${row.week} Squad Session ${decision === "approved" ? "approved" : "returned"}`,
+      `Week ${row.week} ${row.activity_label || "Squad Session"} ${decision === "approved" ? "approved" : "returned"}`,
       "pending",
       nextStatus
     );
@@ -3667,12 +3748,12 @@ function DashboardTab({ allPlayers, onRefresh, showToast }) {
     setPendingBonus(list => list.filter(x => !(x.player_id === row.player_id && x.task_key === row.task_key)));
 
     if (decision === "approved") {
-      setPtsMap(pm => ({ ...pm, [row.player_id]: (pm[row.player_id] || 0) + PTS.squad }));
+      setPtsMap(pm => ({ ...pm, [row.player_id]: (pm[row.player_id] || 0) + (row.points || PTS.squad) }));
     }
 
     alert(decision === "approved"
-      ? `+${PTS.squad} points awarded to ${row.player_name}`
-      : `${row.player_name}'s Squad Session was returned`);
+      ? `+${row.points || PTS.squad} points awarded to ${row.player_name}`
+      : `${row.player_name}'s ${row.activity_label || "Squad Session"} was returned`);
   }
 
   if (loading) return (
@@ -3743,7 +3824,7 @@ function DashboardTab({ allPlayers, onRefresh, showToast }) {
             <div>
               <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:18,color:"#b8860b",letterSpacing:"0.04em",fontWeight:900}}>BONUS POINTS TO APPROVE</div>
               <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
-                {pendingBonus.length} waiting · approve once proof is posted in WhatsApp
+                {pendingBonus.length} waiting · approve once proof/attendance is confirmed
               </div>
             </div>
             <div style={{fontSize:26}}>🏅</div>
@@ -3759,7 +3840,7 @@ function DashboardTab({ allPlayers, onRefresh, showToast }) {
             <div key={`${row.player_id}-${row.task_key}`} style={{background:"white",borderRadius:12,padding:"11px 12px",marginBottom:8,border:"1px solid #fff0c2",display:"grid",gridTemplateColumns:"1fr auto",gap:10,alignItems:"center"}}>
               <div>
                 <div style={{fontSize:14,fontWeight:900,color:"var(--dark)"}}>{row.player_name}</div>
-                <div style={{fontSize:12,color:"var(--mid)",marginTop:2}}>Week {row.week} Squad Session · submitted {formatDublin(row.completed_at)}</div>
+                <div style={{fontSize:12,color:"var(--mid)",marginTop:2}}>Week {row.week} {row.activity_label || "Squad Session"} · submitted {formatDublin(row.completed_at)}</div>
               </div>
               <div style={{display:"flex",gap:6}}>
                 <button onClick={()=>reviewBonus(row,"approved")} style={{background:"#2e7d32",color:"white",border:"none",borderRadius:10,padding:"8px 10px",fontWeight:900,cursor:"pointer",fontSize:12}}>Approve</button>
