@@ -1405,15 +1405,15 @@ export default function App() {
         )}
 
         {session && (player || isAdmin) && tab === "home" && (
-          <HomeTab player={player} checks={checks} pts={pts} weeksDone={weeksDone} onNav={() => setTab("plan")} onToggle={toggleTask} showToast={showToast} waConsent={waConsent} setWaConsent={setWaConsent} userEmail={session?.user?.email} />
+          <HomeTab player={player} checks={checks} pts={pts} weeksDone={weeksDone} onNav={() => setTab("plan")} onToggle={toggleTask} showToast={showToast} waConsent={waConsent} setWaConsent={setWaConsent} userEmail={session?.user?.email} onGoProgress={() => setTab("progress")} />
         )}
 
         {session && (player || isAdmin) && tab === "plan" && (
-          <PlanTab checks={checks} onToggle={toggleTask} player={player} showToast={showToast} />
+          <PlanTab checks={checks} onToggle={toggleTask} player={player} showToast={showToast} onGoProgress={() => setTab("progress")} />
         )}
 
         {session && (player || isAdmin) && tab === "progress" && (
-          <ProgressTab player={player} checks={checks} isAdmin={isAdmin} allPlayers={allPlayers} />
+          <ProgressTab player={player} checks={checks} isAdmin={isAdmin} allPlayers={allPlayers} showToast={showToast} />
         )}
 
         {session && isSuperAdmin && tab === "dashboard" && (
@@ -2026,10 +2026,738 @@ function WeekCountdown({ weekNum }) {
   );
 }
 
-function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToast }) {
+const LEAFLET_CSS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+const LEAFLET_JS_URL  = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+let leafletLoadingPromise = null;
+
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (leafletLoadingPromise) return leafletLoadingPromise;
+
+  leafletLoadingPromise = new Promise((resolve, reject) => {
+    if (!document.querySelector(`link[href="${LEAFLET_CSS_URL}"]`)) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = LEAFLET_CSS_URL;
+      document.head.appendChild(link);
+    }
+
+    const existingScript = document.querySelector(`script[src="${LEAFLET_JS_URL}"]`);
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(window.L));
+      existingScript.addEventListener("error", reject);
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = LEAFLET_JS_URL;
+    script.async = true;
+    script.onload = () => resolve(window.L);
+    script.onerror = reject;
+    document.body.appendChild(script);
+  });
+
+  return leafletLoadingPromise;
+}
+
+function RunRouteMap({ points, height = 220 }) {
+  const mapEl = useRef(null);
+  const mapRef = useRef(null);
+  const lineRef = useRef(null);
+  const startMarkerRef = useRef(null);
+  const finishMarkerRef = useRef(null);
+  const [mapReady, setMapReady] = useState(false);
+  const hasPoints = Array.isArray(points) && points.length > 0;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    loadLeaflet()
+      .then((L) => {
+        if (cancelled || !mapEl.current || mapRef.current) return;
+
+        const first = hasPoints ? points[0] : { lat: 53.388, lng: -6.244 };
+        const map = L.map(mapEl.current, {
+          zoomControl: true,
+          attributionControl: false,
+          scrollWheelZoom: false,
+        }).setView([first.lat, first.lng], hasPoints ? 16 : 13);
+
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+        }).addTo(map);
+
+        mapRef.current = map;
+        setMapReady(true);
+        setTimeout(() => map.invalidateSize(), 150);
+      })
+      .catch((e) => {
+        console.error("Leaflet failed to load", e);
+      });
+
+    return () => {
+      cancelled = true;
+      if (mapRef.current) {
+        try { mapRef.current.remove(); } catch (_) {}
+        mapRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const L = window.L;
+    const map = mapRef.current;
+    if (!L || !map || !mapReady) return;
+
+    if (lineRef.current) {
+      try { map.removeLayer(lineRef.current); } catch (_) {}
+      lineRef.current = null;
+    }
+    if (startMarkerRef.current) {
+      try { map.removeLayer(startMarkerRef.current); } catch (_) {}
+      startMarkerRef.current = null;
+    }
+    if (finishMarkerRef.current) {
+      try { map.removeLayer(finishMarkerRef.current); } catch (_) {}
+      finishMarkerRef.current = null;
+    }
+
+    if (!hasPoints) {
+      map.setView([53.388, -6.244], 13);
+      return;
+    }
+
+    const latLngs = points.map(p => [p.lat, p.lng]);
+    lineRef.current = L.polyline(latLngs, {
+      color: "#a31621",
+      weight: 5,
+      opacity: 0.92,
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(map);
+
+    const startIcon = L.divIcon({
+      className: "run-map-marker",
+      html: "<div class='run-map-dot start'>●</div>",
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+    const finishIcon = L.divIcon({
+      className: "run-map-marker",
+      html: "<div class='run-map-dot finish'>🏁</div>",
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+    });
+
+    startMarkerRef.current = L.marker(latLngs[0], { icon: startIcon }).addTo(map);
+    finishMarkerRef.current = L.marker(latLngs[latLngs.length - 1], { icon: finishIcon }).addTo(map);
+
+    const bounds = lineRef.current.getBounds();
+    if (bounds.isValid()) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 17 });
+    setTimeout(() => map.invalidateSize(), 100);
+  }, [points, hasPoints, mapReady]);
+
+  return (
+    <div style={{height,borderRadius:14,overflow:"hidden",border:"1px solid #e5d4d4",position:"relative",background:"#e8f5e9",marginBottom:10}}>
+      <div ref={mapEl} style={{position:"absolute",inset:0}} />
+      {!hasPoints && (
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:"var(--muted)",fontWeight:800,fontSize:13,textAlign:"center",padding:20,background:"rgba(255,255,255,0.7)",pointerEvents:"none"}}>
+          Start GPS to show your live route on the map.
+        </div>
+      )}
+      <div style={{position:"absolute",left:10,bottom:8,fontSize:10,color:"var(--muted)",fontWeight:800,background:"rgba(255,255,255,0.85)",borderRadius:999,padding:"4px 8px",pointerEvents:"none"}}>
+        OpenStreetMap route preview
+      </div>
+    </div>
+  );
+}
+
+
+
+function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, showToast, player, ps, onGoProgress, isChildView = false }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState("gps");
+  const [tracking, setTracking] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [startedAt, setStartedAt] = useState(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [points, setPoints] = useState([]);
+  const [manualDistance, setManualDistance] = useState("");
+  const [manualMinutes, setManualMinutes] = useState("");
+  const [manualNote, setManualNote] = useState("");
+  const [lastVoiceKm, setLastVoiceKm] = useState(0);
+  const [history, setHistory] = useState([]);
+  const [savedRun, setSavedRun] = useState(null);
+  const [shareImageUrl, setShareImageUrl] = useState(null);
+  const [selectedRun, setSelectedRun] = useState(null);
+  const [completedRunPromptOpen, setCompletedRunPromptOpen] = useState(false);
+  const watchRef = useRef(null);
+  const timerRef = useRef(null);
+  const pausedRef = useRef(false);
+
+  const storageKey = `runLog:${APP_SQUAD}:${taskKey}`;
+  const historyKey = `runHistory:${APP_SQUAD}:${player?.id || "unknown"}`;
+  const hasSavedRunForThisTask = !!savedRun && savedRun.taskKey === taskKey;
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+      if (saved) {
+        setSavedRun(saved);
+        if (saved.type === "gps" && Array.isArray(saved.points)) setPoints(saved.points);
+      }
+      const h = JSON.parse(localStorage.getItem(historyKey) || "[]");
+      setHistory(Array.isArray(h) ? h : []);
+    } catch (_) {}
+  }, [storageKey, historyKey]);
+
+  useEffect(() => {
+    if (open) {
+      stopWatchingOnly();
+      setTracking(false);
+      setPaused(false);
+      pausedRef.current = false;
+      setStartedAt(null);
+      setElapsed(0);
+      setPoints([]);
+      setLastVoiceKm(0);
+      setShareImageUrl(null);
+      setSelectedRun(null);
+      setCompletedRunPromptOpen(false);
+      resetManualFields();
+    }
+  }, [open, run.distance]);
+
+  useEffect(() => () => stopWatchingOnly(), []);
+
+  function toRad(v) { return (v * Math.PI) / 180; }
+  function distanceBetween(a, b) {
+    const R = 6371;
+    const dLat = toRad(b.lat - a.lat);
+    const dLon = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const x = Math.sin(dLat/2) ** 2 + Math.sin(dLon/2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+  }
+  function totalDistanceKm(list) {
+    return list.slice(1).reduce((sum, p, i) => sum + distanceBetween(list[i], p), 0);
+  }
+  function fmtTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+  function targetKm() {
+    const raw = String(run.distance || "").toLowerCase();
+    const match = raw.match(/([\d.]+)\s*k/);
+    return match ? Number(match[1]) : null;
+  }
+
+  function resetManualFields() {
+    const target = targetKm();
+    setManualDistance(target ? String(target) : "");
+    setManualMinutes("");
+    setManualNote("");
+  }
+  function closeRunModal() {
+    stopWatchingOnly();
+    setTracking(false);
+    setPaused(false);
+    pausedRef.current = false;
+    setStartedAt(null);
+    setElapsed(0);
+    setPoints([]);
+    setLastVoiceKm(0);
+    setShareImageUrl(null);
+    setSelectedRun(null);
+    setCompletedRunPromptOpen(false);
+    setMode("gps");
+    resetManualFields();
+    setOpen(false);
+  }
+
+  function stopWatchingOnly() {
+    if (watchRef.current) {
+      try { navigator.geolocation.clearWatch(watchRef.current); } catch (_) {}
+      watchRef.current = null;
+    }
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+  function speak(text) {
+    try {
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1;
+      window.speechSynthesis.speak(u);
+    } catch (_) {}
+  }
+  function saveHistory(entry) {
+    try {
+      const runEntry = {
+        ...entry,
+        id: entry.id || `latest:${player?.id || "unknown"}`,
+        savedAt: entry.savedAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      const next = [runEntry];
+      setHistory(next);
+      localStorage.setItem(historyKey, JSON.stringify(next));
+      return runEntry;
+    } catch (_) {
+      return entry;
+    }
+  }
+
+  function removeCompletedRun() {
+    if (!done) return;
+
+    try {
+      setHistory([]);
+      localStorage.setItem(historyKey, JSON.stringify([]));
+      localStorage.removeItem(storageKey);
+      setSavedRun(null);
+      setSelectedRun(null);
+      setShareImageUrl(null);
+    } catch (e) {
+      console.error("Local run removal failed", e);
+    }
+
+    if (canToggle) {
+      onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
+    }
+    showToast?.("↩️ Run removed and challenge unchecked");
+  }
+
+  function formatRunDateTime(ts) {
+    if (!ts) return "";
+    try {
+      return new Date(ts).toLocaleString("en-IE", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    } catch (_) {
+      return "";
+    }
+  }
+  function startGps() {
+    if (!navigator.geolocation) {
+      showToast?.("GPS is not available on this device. Add the run manually instead.");
+      setMode("manual");
+      return;
+    }
+    setPoints([]);
+    setElapsed(0);
+    setPaused(false);
+    pausedRef.current = false;
+    setLastVoiceKm(0);
+    const start = Date.now();
+    setStartedAt(start);
+    setTracking(true);
+    timerRef.current = setInterval(() => {
+      if (!pausedRef.current) setElapsed(v => v + 1);
+    }, 1000);
+    watchRef.current = navigator.geolocation.watchPosition(
+      pos => {
+        if (pausedRef.current) return;
+        const next = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          acc: pos.coords.accuracy,
+          ts: Date.now()
+        };
+        setPoints(prev => {
+          const last = prev[prev.length - 1];
+          if (last && distanceBetween(last, next) < 0.005) return prev;
+          const updated = [...prev, next];
+          const km = totalDistanceKm(updated);
+          const voiceKm = Math.floor(km * 2) / 2;
+          if (voiceKm >= 0.5 && voiceKm > lastVoiceKm) {
+            setLastVoiceKm(voiceKm);
+            speak(`${voiceKm} kilometres completed`);
+          }
+          return updated;
+        });
+      },
+      err => {
+        console.error("Run GPS error", err);
+        showToast?.("GPS could not start. Check location permissions or add manually.");
+        setTracking(false);
+        stopWatchingOnly();
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
+  }
+  function togglePause() {
+    pausedRef.current = !pausedRef.current;
+    setPaused(pausedRef.current);
+    showToast?.(pausedRef.current ? "⏸️ Run paused" : "▶️ Run resumed");
+  }
+  function finishGps() {
+    stopWatchingOnly();
+    setTracking(false);
+    setPaused(false);
+    pausedRef.current = false;
+    const distanceKm = Number(totalDistanceKm(points).toFixed(2));
+    const durationMin = Math.max(1, Math.round(elapsed / 60));
+    const saved = {
+      type: "gps",
+      week,
+      taskKey,
+      label: run.label,
+      target: run.distance,
+      distanceKm,
+      durationMin,
+      pace: distanceKm > 0 && durationMin ? Number((durationMin / distanceKm).toFixed(2)) : null,
+      points,
+      savedAt: new Date().toISOString()
+    };
+    const imageUrl = createShareImage(saved, { silent: true });
+    const savedWithImage = saveHistory({ ...saved, shareImageUrl: imageUrl });
+    setSavedRun(savedWithImage);
+    setShareImageUrl(imageUrl);
+    try { localStorage.setItem(storageKey, JSON.stringify(savedWithImage)); } catch (_) {}
+    setManualDistance(String(distanceKm));
+    setManualMinutes(String(durationMin));
+    const target = targetKm();
+    if (target && distanceKm >= target) speak("Target achieved. Great running.");
+    const meetsTarget = !target || distanceKm >= target;
+    showToast?.(meetsTarget
+      ? `🏃 Run saved: ${distanceKm} km in ${durationMin} min`
+      : `Run saved, but target is ${target} km. It will not count yet.`);
+    if (meetsTarget && !done && canToggle) onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
+  }
+  function saveManual() {
+    const distanceKm = Number(manualDistance);
+    const durationMin = null;
+    if (!distanceKm || distanceKm <= 0) {
+      showToast?.("Enter the distance completed.");
+      return;
+    }
+    const saved = {
+      type: "manual",
+      week,
+      taskKey,
+      label: run.label,
+      target: run.distance,
+      distanceKm,
+      durationMin,
+      pace: distanceKm > 0 && durationMin ? Number((durationMin / distanceKm).toFixed(2)) : null,
+      note: manualNote,
+      savedAt: new Date().toISOString()
+    };
+    const imageUrl = createShareImage(saved, { silent: true });
+    const savedWithImage = saveHistory({ ...saved, shareImageUrl: imageUrl });
+    setSavedRun(savedWithImage);
+    setShareImageUrl(imageUrl);
+    try { localStorage.setItem(storageKey, JSON.stringify(savedWithImage)); } catch (_) {}
+    const target = targetKm();
+    const meetsTarget = !target || distanceKm >= target;
+    showToast?.(meetsTarget
+      ? `🏃 Run logged: ${distanceKm} km${durationMin ? ` in ${durationMin} min` : ""}`
+      : `Run saved, but target is ${target} km. It will not count yet.`);
+    if (meetsTarget && !done && canToggle) onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
+    resetManualFields();
+  }
+  function drawRoutePreview(ctx, routePoints, x, y, w, h) {
+    ctx.fillStyle = "#e8f5e9";
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = "#cfe8d2";
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 6; i++) {
+      ctx.beginPath(); ctx.moveTo(x, y + (h / 6) * i); ctx.lineTo(x + w, y + (h / 6) * i); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + (w / 6) * i, y); ctx.lineTo(x + (w / 6) * i, y + h); ctx.stroke();
+    }
+    if (!routePoints || routePoints.length < 2) {
+      ctx.fillStyle = "#8d6e63"; ctx.font = "bold 22px Arial"; ctx.textAlign = "center";
+      ctx.fillText("Route saved locally", x + w / 2, y + h / 2);
+      return;
+    }
+    const lats = routePoints.map(p => p.lat), lngs = routePoints.map(p => p.lng);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats), minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+    const pad = 26;
+    const toXY = (p) => {
+      const px = maxLng === minLng ? x + w / 2 : x + pad + ((p.lng - minLng) / (maxLng - minLng)) * (w - pad * 2);
+      const py = maxLat === minLat ? y + h / 2 : y + pad + ((maxLat - p.lat) / (maxLat - minLat)) * (h - pad * 2);
+      return [px, py];
+    };
+    ctx.strokeStyle = "#a31621"; ctx.lineWidth = 8; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.beginPath();
+    routePoints.forEach((p, i) => { const [px, py] = toXY(p); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); });
+    ctx.stroke();
+    const [sx, sy] = toXY(routePoints[0]); const [fx, fy] = toXY(routePoints[routePoints.length - 1]);
+    ctx.fillStyle = "#2e7d32"; ctx.beginPath(); ctx.arc(sx, sy, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffffff"; ctx.font = "bold 26px Arial"; ctx.textAlign = "center"; ctx.fillText("🏁", fx, fy + 9);
+  }
+
+  function createShareImage(runOverride = null, opts = {}) {
+    const runData = runOverride || savedRun || {
+      type: mode === "manual" ? "manual" : "gps",
+      distanceKm: Number(manualDistance || distanceKm || 0),
+      durationMin: Number(manualMinutes || Math.max(1, Math.round(elapsed / 60))),
+      points,
+      savedAt: new Date().toISOString(),
+      target: run.distance,
+      label: run.label,
+      taskKey
+    };
+    const dist = Number(runData.distanceKm || 0);
+    const mins = runData.durationMin ? Number(runData.durationMin) : null;
+    const timeText = mins ? `${mins} min` : "Not entered";
+    const paceVal = dist > 0 && mins ? mins / dist : null;
+    const paceText = paceVal ? `${Math.floor(paceVal)}:${String(Math.round((paceVal % 1) * 60)).padStart(2, "0")} /km` : "—";
+    const target = targetKm();
+    const achieved = !target || dist >= target;
+    const runType = runData.type === "gps" ? "🏃 GPS VERIFIED" : "✍️ MANUAL ENTRY";
+    const dateText = formatRunDateTime(runData.savedAt || new Date().toISOString());
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 1080; canvas.height = 1920;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fffaf2"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#a31621"; ctx.fillRect(0, 0, canvas.width, 230);
+    ctx.fillStyle = "#f4c542"; ctx.font = "bold 48px Arial"; ctx.textAlign = "center"; ctx.fillText("SUMMER FITNESS CHALLENGE", canvas.width / 2, 82, canvas.width - 120);
+    ctx.fillStyle = "#ffffff"; ctx.font = "bold 42px Arial"; ctx.textAlign = "center"; ctx.fillText("RUN COMPLETE", canvas.width / 2, 145, canvas.width - 120);
+    ctx.font = "bold 30px Arial"; ctx.fillText(runType, 540, 190);
+
+    ctx.fillStyle = "#2b1717"; ctx.font = "bold 52px Arial"; ctx.fillText(player?.name || "Player", 540, 300);
+    ctx.fillStyle = "#7c5d5d"; ctx.font = "bold 32px Arial"; ctx.fillText(`Week ${week} · ${runData.label || run.label} · Target ${runData.target || run.distance}`, 540, 350);
+    ctx.font = "bold 28px Arial"; ctx.fillText(dateText, 540, 390);
+
+    drawRoutePreview(ctx, runData.points || points, 80, 425, 920, 640);
+
+    [["DISTANCE", `${dist.toFixed(2)} km`], ["TIME", timeText], ["PACE", paceText]].forEach(([label, value], i) => {
+      const x = 80 + i * 315;
+      ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "#ead7d7"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(x, 1115, 285, 145, 28); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#7c5d5d"; ctx.font = "bold 24px Arial"; ctx.fillText(label, x + 142, 1165);
+      ctx.fillStyle = "#a31621"; ctx.font = "bold 42px Arial"; ctx.fillText(value, x + 142, 1220);
+    });
+
+    ctx.fillStyle = achieved ? "#2e7d32" : "#e65100";
+    ctx.beginPath(); ctx.roundRect(150, 1315, 780, 95, 48); ctx.fill();
+    ctx.fillStyle = "#ffffff"; ctx.font = "bold 38px Arial";
+    ctx.fillText(achieved ? "🏅 TARGET ACHIEVED" : "KEEP GOING - TARGET NOT REACHED", 540, 1377);
+
+    ctx.fillStyle = "#7c5d5d"; ctx.font = "bold 28px Arial"; ctx.fillText("Summer Challenge 2026", 540, 1525);
+    ctx.font = "24px Arial"; ctx.fillText("Route details stay private on this device", 540, 1570);
+
+    const url = canvas.toDataURL("image/png");
+    setShareImageUrl(url);
+    if (runOverride) setSelectedRun({ ...runOverride, shareImageUrl: url });
+    if (!opts.silent) showToast?.("📸 Share image created");
+    return url;
+  }
+
+  async function shareGeneratedImage(imageOverride = null) {
+    const imageToShare = imageOverride || selectedRun?.shareImageUrl || shareImageUrl;
+    if (!imageToShare) {
+      showToast?.("Create or save a run first, then share the image.");
+      return;
+    }
+    try {
+      const blob = await (await fetch(imageToShare)).blob();
+      const file = new File([blob], `fingallians-run-week-${week}.png`, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: "Fingallians Run Complete" });
+      } else {
+        const a = document.createElement("a");
+        a.href = imageToShare;
+        a.download = `fingallians-run-week-${week}.png`;
+        a.click();
+        showToast?.("Image saved. You can share it from your photos/files.");
+      }
+    } catch (e) {
+      console.error("Share image failed", e);
+      showToast?.("Image created — long press/save it below.");
+    }
+  }
+
+  async function shareSaveImage(runOverride = null) {
+    const image = runOverride?.shareImageUrl || shareImageUrl || createShareImage(runOverride || savedRun || null, { silent: true });
+    await shareGeneratedImage(image);
+  }
+
+  const distanceKm = Number(totalDistanceKm(points).toFixed(2));
+  const target = targetKm();
+  const targetHit = target ? distanceKm >= target : false;
+  const pace = distanceKm > 0 && elapsed > 0 ? `${Math.floor((elapsed/60)/distanceKm)}:${String(Math.round(((elapsed/60)/distanceKm % 1)*60)).padStart(2,"0")} /km` : "—";
+  const personalBest = history.filter(h => h.distanceKm >= 1 && h.durationMin).sort((a,b) => (a.durationMin/a.distanceKm) - (b.durationMin/b.distanceKm))[0];
+
+  return (
+    <>
+      <div
+        className={`run-chip${done?" done":""}`}
+        style={!done && ps ? {background:ps.chip,color:ps.accent,borderColor:"transparent"} : {}}
+        onClick={(e)=>{
+          e.stopPropagation();
+          if (!canToggle) return;
+          if (done) {
+            if (hasSavedRunForThisTask) {
+              setCompletedRunPromptOpen(true);
+            } else {
+              // Old completed runs have no saved run/logger screenshot, so keep the old behaviour:
+              // clicking the pill simply toggles the run off again.
+              onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
+            }
+          } else {
+            setOpen(true);
+          }
+        }}
+      >
+        {run.icon || "🏃"} {run.label}: {run.distance} {done?"✓":""}
+      </div>
+
+      {completedRunPromptOpen && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}} onClick={() => setCompletedRunPromptOpen(false)}>
+          <div style={{width:"min(420px,100%)",background:"#fff",borderRadius:18,padding:18,boxShadow:"0 20px 60px rgba(0,0,0,0.28)",position:"relative"}} onClick={e=>e.stopPropagation()}>
+            <button style={{position:"absolute",right:12,top:10,border:0,background:"#f8f1f1",color:"var(--g)",borderRadius:999,width:32,height:32,fontSize:20,fontWeight:900,cursor:"pointer"}} onClick={() => setCompletedRunPromptOpen(false)}>×</button>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:26,color:"var(--g)",letterSpacing:"0.02em"}}>RUN ALREADY COMPLETED</div>
+            <>
+              <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.45,margin:"6px 0 14px"}}>
+                This run has already been completed. You can view/share the saved screenshot, or remove only runs saved with the run logger.
+              </div>
+              <div style={{display:"grid",gap:8}}>
+                <button
+                  onClick={() => {
+                    setCompletedRunPromptOpen(false);
+                    if (isChildView) {
+                      showToast?.("Ask your parent to open the Progress tab to view and share the saved screenshot.");
+                    } else {
+                      onGoProgress?.();
+                      showToast?.("Need the screenshot? Open the Progress tab to view and share your last saved run.");
+                    }
+                  }}
+                  style={{border:0,background:"var(--g)",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}
+                >
+                  📸 View / Share Screenshot
+                </button>
+                {hasSavedRunForThisTask && (
+                  <button
+                    onClick={() => {
+                      setCompletedRunPromptOpen(false);
+                      removeCompletedRun();
+                    }}
+                    style={{border:"1px solid #ead7d7",background:"#fff",color:"#a31621",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}
+                  >
+                    ✕ Remove Run
+                  </button>
+                )}
+                <button
+                  onClick={() => setCompletedRunPromptOpen(false)}
+                  style={{border:0,background:"#f8f1f1",color:"var(--muted)",borderRadius:12,padding:"10px 12px",fontWeight:900,fontFamily:"inherit"}}
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          </div>
+        </div>
+      )}
+
+      {open && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}} onClick={closeRunModal}>
+          <div style={{width:"min(520px,100%)",maxHeight:"calc(100vh - 32px)",overflowY:"auto",background:"#fff",borderRadius:18,padding:18,boxShadow:"0 20px 60px rgba(0,0,0,0.28)",position:"relative"}} onClick={e=>e.stopPropagation()}>
+            <button style={{position:"absolute",right:12,top:10,border:0,background:"#f8f1f1",color:"var(--g)",borderRadius:999,width:32,height:32,fontSize:20,fontWeight:900,cursor:"pointer"}} onClick={closeRunModal}>×</button>
+
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:28,color:"var(--g)",letterSpacing:"0.02em"}}>RUN LOGGER</div>
+            <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.45,margin:"4px 0 12px"}}>
+              Week {week} · {run.label} · Target {run.distance}. Track with GPS or add manually. The route preview stays on this device.
+            </div>
+
+            <div style={{background:"#fff7e0",border:"1px solid #f4df9b",borderRadius:12,padding:10,fontSize:12,fontWeight:800,color:"#6d5200",lineHeight:1.4,marginBottom:12}}>
+              🦺 Safety first: run with an adult, choose a safe route, and avoid roads where possible.
+            </div>
+
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <button onClick={()=>setMode("gps")} style={{flex:1,border:"1px solid #ead7d7",background:mode==="gps"?"var(--g)":"#fff",color:mode==="gps"?"#fff":"var(--g)",borderRadius:10,padding:"9px 10px",fontWeight:900,fontFamily:"inherit"}}>GPS</button>
+              <button onClick={()=>setMode("manual")} style={{flex:1,border:"1px solid #ead7d7",background:mode==="manual"?"var(--g)":"#fff",color:mode==="manual"?"#fff":"var(--g)",borderRadius:10,padding:"9px 10px",fontWeight:900,fontFamily:"inherit"}}>Manual</button>
+            </div>
+
+            {mode === "gps" ? (
+              <div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:10}}>
+                  <div style={{background:"#f8f1f1",borderRadius:10,padding:8,textAlign:"center"}}><div style={{fontSize:22,fontWeight:900,color:"var(--g)"}}>{distanceKm}</div><div style={{fontSize:10,color:"var(--muted)"}}>km</div></div>
+                  <div style={{background:"#f8f1f1",borderRadius:10,padding:8,textAlign:"center"}}><div style={{fontSize:22,fontWeight:900,color:"var(--g)"}}>{fmtTime(elapsed)}</div><div style={{fontSize:10,color:"var(--muted)"}}>time</div></div>
+                  <div style={{background:"#f8f1f1",borderRadius:10,padding:8,textAlign:"center"}}><div style={{fontSize:22,fontWeight:900,color:"var(--g)"}}>{pace}</div><div style={{fontSize:10,color:"var(--muted)"}}>pace</div></div>
+                </div>
+
+                <div style={{position:"relative"}}>
+                  <RunRouteMap points={points} height={220} />
+                  {targetHit && <div style={{position:"absolute",right:10,top:10,background:"#2e7d32",color:"#fff",borderRadius:999,padding:"5px 9px",fontSize:11,fontWeight:900,zIndex:500}}>🏅 Target achieved</div>}
+                </div>
+
+                <div style={{display:"grid",gridTemplateColumns:tracking?"1fr 1fr":"1fr",gap:8}}>
+                  {tracking && <button onClick={togglePause} style={{border:0,background:"#ff9800",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}>{paused ? "▶ RESUME" : "⏸ PAUSE"}</button>}
+                  <button onClick={tracking ? finishGps : startGps} style={{border:0,background:tracking?"#c62828":"var(--g)",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}>
+                    {tracking ? "■ FINISH RUN" : "▶ START GPS RUN"}
+                  </button>
+                </div>
+                {target && <div style={{fontSize:11,color:targetHit?"#2e7d32":"var(--muted)",marginTop:8,fontWeight:800}}>{targetHit ? "✅ Target distance reached" : `Target: ${target} km`}</div>}
+              </div>
+            ) : (
+              <div style={{display:"grid",gap:8}}>
+                <label style={{fontSize:11,fontWeight:900,color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.06em"}}>Distance completed in kilometres</label>
+                <input value={manualDistance} onChange={e=>setManualDistance(e.target.value)} placeholder="Example: 1.5" inputMode="decimal" style={{padding:"10px 12px",border:"1px solid #ead7d7",borderRadius:10,fontFamily:"inherit"}} />
+<label style={{fontSize:11,fontWeight:900,color:"var(--muted)",textTransform:"uppercase",letterSpacing:"0.06em"}}>Optional note</label>
+                <input value={manualNote} onChange={e=>setManualNote(e.target.value)} placeholder="Example: ran with Dad" style={{padding:"10px 12px",border:"1px solid #ead7d7",borderRadius:10,fontFamily:"inherit"}} />
+                <button onClick={saveManual} style={{border:0,background:"var(--g)",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}>✓ SAVE RUN</button>
+              </div>
+            )}
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr",gap:8,marginTop:12}}>
+              <button onClick={() => shareSaveImage()} style={{border:"1px solid #ead7d7",background:"#fff",color:"var(--g)",borderRadius:12,padding:"10px 12px",fontWeight:900,fontFamily:"inherit"}}>📸 Share / Save Image</button>
+            </div>
+
+            {shareImageUrl && (
+              <div style={{marginTop:12,background:"#fff",border:"1px solid #ead7d7",borderRadius:14,padding:10}}>
+                <img src={shareImageUrl} alt="Generated run share card" style={{width:"100%",borderRadius:10,display:"block"}} />
+                <button onClick={() => shareSaveImage(savedRun)} style={{width:"100%",marginTop:10,border:0,background:"var(--g)",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}>
+                  📤 Share / Save Image
+                </button>
+              </div>
+            )}
+
+
+            {personalBest && (
+              <div style={{marginTop:12,background:"#f8f1f1",borderRadius:12,padding:10,fontSize:12,color:"var(--ink)",fontWeight:800}}>
+                🏆 Personal best pace: {(personalBest.durationMin / personalBest.distanceKm).toFixed(1)} min/km
+              </div>
+            )}
+
+            {selectedRun && (
+              <div style={{marginTop:12,background:"#fff",border:"1px solid #ead7d7",borderRadius:14,padding:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}>
+                  <div style={{fontSize:12,fontWeight:900,color:"var(--g)"}}>{"Saved run image"}</div>
+                  <button onClick={() => setSelectedRun(null)} style={{border:0,background:"#f8f1f1",color:"var(--g)",borderRadius:999,width:28,height:28,fontWeight:900}}>×</button>
+                </div>
+                {selectedRun.shareImageUrl ? (
+                  <img src={selectedRun.shareImageUrl} alt="Saved run share card" style={{width:"100%",borderRadius:10,display:"block"}} />
+                ) : (
+                  <button onClick={() => shareSaveImage(selectedRun)} style={{width:"100%",border:"1px solid #ead7d7",background:"#fff",color:"var(--g)",borderRadius:12,padding:"10px 12px",fontWeight:900,fontFamily:"inherit"}}>
+                    📸 Share / Save Image
+                  </button>
+                )}
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+
+function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToast, onGoProgress, isChildView = false }) {
   const [expandedSkill, setExpandedSkill] = useState(null);
   const [expandedSquad, setExpandedSquad] = useState(false);
-  const [expandedFriday, setExpandedFriday] = useState(false);
   const [playingVideo, setPlayingVideo]   = useState(null);
   const canToggle = !!player;
   const squadVideos = [
@@ -2050,11 +2778,29 @@ function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToas
               const k = runKey(w.week, i);
               const done = isApproved(checks[k]);
               return (
-                <div key={i} className={`run-chip${done?" done":""}`}
-                  style={!done?{background:ps.chip,color:ps.accent,borderColor:"transparent"}:{}}
-                  onClick={()=>canToggle&&onToggle(k,PTS.run,`${r.label} (${r.distance})`)}>
-                  🏃 {r.label}: {r.distance} {done?"✓":""}
-                </div>
+                /run/i.test(r.label || "") ? (
+                  <RunLoggerV1
+                    key={i}
+                    week={w.week}
+                    runIndex={i}
+                    run={r}
+                    taskKey={k}
+                    done={done}
+                    canToggle={canToggle}
+                    onToggle={onToggle}
+                    showToast={showToast}
+                    player={player}
+                    ps={ps}
+                    onGoProgress={onGoProgress}
+                    isChildView={isChildView}
+                  />
+                ) : (
+                  <div key={i} className={`run-chip${done?" done":""}`}
+                    style={!done?{background:ps.chip,color:ps.accent,borderColor:"transparent"}:{}}
+                    onClick={()=>canToggle&&onToggle(k,PTS.run,`${r.icon || "🏃"} ${r.label} (${r.distance})`)}>
+                    {r.icon || "🏃"} {r.label}: {r.distance} {done?"✓":""}
+                  </div>
+                )
               );
             })}
           </div>
@@ -2227,48 +2973,6 @@ function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToas
           </div>
         );
       })()}
-
-      {(() => {
-        const k = fridayKey(w.week);
-        const done = isApproved(checks[k]);
-        const pending = isPending(checks[k]);
-        const returned = isRejected(checks[k]);
-        return (
-          <div className="squad-card" style={{background:"linear-gradient(135deg,#0b6623 0%,#1e6b2e 100%)"}}>
-            <div className="squad-hd" onClick={() => setExpandedFriday(v => !v)}>
-              <div className={`skill-check${done?" done":""}`} style={{flexShrink:0,cursor:"pointer",borderColor:pending?"#f5a623":returned?"#e65100":undefined,background:pending?"#fff3e0":returned?"#ffebee":undefined,color:pending?"#e65100":returned?"#c62828":undefined}}
-                onClick={e=>{e.stopPropagation(); setExpandedFriday(v=>!v);}}>
-                {done?"✓":pending?"…":returned?"↺":""}
-              </div>
-              <div className="squad-hd-text">
-                <div className="squad-icon">🏑</div>
-                <div className="squad-name">Friday Night Hurling</div>
-                <div className="squad-type">
-                  +{PTS.friday} pts {pending ? "· Awaiting approval" : returned ? "· Returned" : ""}
-                </div>
-              </div>
-              <div className="squad-pts">{pending ? "Pending" : returned ? "Returned" : `+${PTS.friday}`}</div>
-              <div style={{fontSize:20,color:"rgba(255,255,255,0.65)",transition:"transform 0.2s",transform:expandedFriday?"rotate(180deg)":"none",justifySelf:"end"}}>⌄</div>
-            </div>
-            {expandedFriday && (
-              <div className="squad-body">
-                <p className="squad-desc">Did you attend Friday Night Hurling this week?</p>
-                <div className="squad-cta">🏑 Submit this for approval. We'll check with the coaches and approve once you've been marked present.</div>
-                {returned && (
-                  <div style={{background:"#ffebee",border:"1px solid #ffcdd2",color:"#c62828",borderRadius:10,padding:"10px 12px",fontSize:13,fontWeight:800,marginBottom:12}}>
-                    ↺ Returned by admin — please check with the coaches and submit again if needed.
-                  </div>
-                )}
-                {canToggle && (
-                  <button className={`squad-mark${done?" done":""}`} onClick={()=>onToggle(k,PTS.friday,"Friday Night Hurling")}>
-                    {pending ? "AWAITING APPROVAL" : returned ? "↺ SUBMIT AGAIN" : done ? "✕ REMOVE" : "✓ SUBMIT FOR APPROVAL"}
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })()}
     </div>
   );
 }
@@ -2305,7 +3009,7 @@ function VideoEmbed({ ytId, playing, onPlay, dark }) {
   );
 }
 
-function PlanTab({ checks, onToggle, player, showToast }) {
+function PlanTab({ checks, onToggle, player, showToast, onGoProgress }) {
   return (
     <div className="wk-detail">
       <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:18,color:"var(--g)",marginBottom:12,letterSpacing:"0.02em"}}>
@@ -2318,7 +3022,7 @@ function PlanTab({ checks, onToggle, player, showToast }) {
         const pct = Math.round((wP/wM)*100);
         return (
           <div key={i} style={{marginBottom:24}}>
-            <WeekDetail w={w} ps={ps} pct={pct} wPts={wP} wMax={wM} checks={checks} onToggle={onToggle} player={player} showToast={showToast} />
+            <WeekDetail w={w} ps={ps} pct={pct} wPts={wP} wMax={wM} checks={checks} onToggle={onToggle} player={player} showToast={showToast} onGoProgress={onGoProgress} isChildView={false} />
           </div>
         );
       })}
@@ -2332,7 +3036,7 @@ function PlanTab({ checks, onToggle, player, showToast }) {
         </div>
         <div className="tc-section">
           <strong>Data & Privacy</strong>
-          <p>To use this app we store your child's first and last name and your email address. No other personal information is collected or stored. Your data is not shared with any third party and is used solely to manage participation in the 2026 Summer Challenge. You can request deletion of your data at any time by emailing <strong>Fingallians2015GirlsChallenge@gmail.com</strong>.</p>
+          <p>To use this app we store your child's first and last name and your email address. No other personal information is collected or stored. Your data is not shared with any third party and is used solely to manage participation in the 2026 Summer Challenge. You can request deletion of your data at any time by emailing <strong>fingallians2014girls@gmail.com</strong>.</p>
         </div>
         <div className="tc-section">
           <strong>Participation</strong>
@@ -2484,8 +3188,130 @@ function AdminProgressSnapshot({ allPlayers }) {
   );
 }
 
-function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
-  if (isAdmin) return <AdminProgressSnapshot allPlayers={allPlayers} />;
+function formatLocalRunDateTime(ts) {
+  if (!ts) return "";
+  try {
+    return new Date(ts).toLocaleString("en-IE", { weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" });
+  } catch (_) { return ""; }
+}
+
+function getRunHistoryKeys(player) {
+  const playerId = player?.id || "unknown";
+  return {
+    active: `runHistory:${APP_SQUAD}:${playerId}`,
+  };
+}
+
+function loadLocalRunHistory(player) {
+  try {
+    const keys = getRunHistoryKeys(player);
+    const active = JSON.parse(localStorage.getItem(keys.active) || "[]");
+    if (!Array.isArray(active)) return [];
+    return active.slice(0, 1);
+  } catch (_) {
+    return [];
+  }
+}
+
+function RunHistoryProgressSection({ player, showToast }) {
+  const [runs, setRuns] = useState([]);
+  const [selectedRun, setSelectedRun] = useState(null);
+
+  const reload = useCallback(() => {
+    const loaded = loadLocalRunHistory(player);
+    setRuns(loaded);
+    setSelectedRun(null);
+    showToast?.("Progress refreshed");
+  }, [player?.id, showToast]);
+
+  useEffect(() => {
+    const loaded = loadLocalRunHistory(player);
+    setRuns(loaded);
+  }, [player?.id]);
+
+  const latestRun = runs[0] || null;
+  const totalDistance = latestRun ? Number(latestRun.distanceKm) || 0 : 0;
+
+  async function shareSavedRunImage(run) {
+    const imageToShare = run?.shareImageUrl;
+    if (!imageToShare) {
+      showToast?.("No screenshot is saved for this run yet. Save the run again to create one.");
+      return;
+    }
+    try {
+      const blob = await (await fetch(imageToShare)).blob();
+      const file = new File([blob], `fingallians-run-week-${run.week || "run"}.png`, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: "Fingallians Run Complete" });
+      } else {
+        const a = document.createElement("a");
+        a.href = imageToShare;
+        a.download = `fingallians-run-week-${run.week || "run"}.png`;
+        a.click();
+        showToast?.("Image saved. You can share it from your photos/files.");
+      }
+    } catch (e) {
+      console.error("Share saved run image failed", e);
+      showToast?.("Open the screenshot, then long press/save it.");
+    }
+  }
+
+  return (
+    <div style={{background:"white",borderRadius:14,padding:"14px",marginBottom:14,border:"1px solid #f0dede",width:"100%"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10}}>
+        <div>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:16,color:"var(--dark)",letterSpacing:"0.04em"}}>LAST SAVED RUN</div>
+          <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>Saved on this device only</div>
+        </div>
+        <button onClick={reload} style={{border:"1px solid #ead7d7",background:"#fff",color:"var(--g)",borderRadius:999,padding:"6px 10px",fontSize:11,fontWeight:900,fontFamily:"inherit"}}>Refresh</button>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+        <div style={{background:"#f8f1f1",borderRadius:10,padding:"9px 8px",textAlign:"center"}}><div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:22,color:"var(--g)",lineHeight:1}}>{latestRun ? 1 : 0}</div><div style={{fontSize:10,color:"var(--muted)"}}>run saved</div></div>
+        <div style={{background:"#f8f1f1",borderRadius:10,padding:"9px 8px",textAlign:"center"}}><div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:22,color:"var(--g)",lineHeight:1}}>{totalDistance.toFixed(2)}</div><div style={{fontSize:10,color:"var(--muted)"}}>km logged</div></div>
+      </div>
+
+      {!latestRun ? (
+        <div style={{textAlign:"center",color:"var(--muted)",padding:"12px 0",fontSize:13}}>No run saved on this device yet.</div>
+      ) : (
+        <div style={{display:"grid",gap:8,marginBottom:12}}>
+          <div style={{border:"1px solid #f0dede",borderRadius:12,padding:"10px",display:"grid",gridTemplateColumns:"1fr auto auto",gap:8,alignItems:"center"}}>
+            <button onClick={() => setSelectedRun(latestRun)} style={{border:0,background:"transparent",padding:0,textAlign:"left",fontFamily:"inherit",cursor:"pointer"}}>
+              <div style={{fontSize:13,fontWeight:900,color:"var(--dark)"}}>Week {latestRun.week} · {latestRun.type === "gps" ? "GPS run" : "Manual run"}</div>
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>{formatLocalRunDateTime(latestRun.savedAt)} · {latestRun.distanceKm} km{latestRun.durationMin ? ` · ${latestRun.durationMin} min` : ""}</div>
+            </button>
+            <button onClick={() => setSelectedRun(latestRun)} style={{border:"1px solid #ead7d7",background:"#fff",color:"var(--g)",borderRadius:999,padding:"7px 10px",fontSize:11,fontWeight:900,fontFamily:"inherit"}}>View</button>
+            <button onClick={() => shareSavedRunImage(latestRun)} style={{border:0,background:"var(--g)",color:"#fff",borderRadius:999,padding:"7px 10px",fontSize:11,fontWeight:900,fontFamily:"inherit"}}>Share / Save</button>
+          </div>
+        </div>
+      )}
+
+      {selectedRun && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:10040,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={() => setSelectedRun(null)}>
+          <div style={{background:"white",borderRadius:18,width:"100%",maxWidth:520,maxHeight:"88vh",overflow:"auto",padding:14}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10}}>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:22,color:"var(--g)"}}>SHARE IMAGE</div>
+              <button onClick={() => setSelectedRun(null)} style={{border:0,background:"#f8f1f1",color:"var(--g)",borderRadius:999,width:32,height:32,fontWeight:900}}>×</button>
+            </div>
+            {selectedRun.shareImageUrl ? (
+              <>
+                <img src={selectedRun.shareImageUrl} alt="Run share card" style={{width:"100%",borderRadius:12,display:"block"}} />
+                <button onClick={() => shareSavedRunImage(selectedRun)} style={{width:"100%",marginTop:10,border:0,background:"var(--g)",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}>
+                  📤 Share / Save Image
+                </button>
+              </>
+            ) : (
+              <div style={{padding:20,textAlign:"center",color:"var(--muted)",fontSize:13}}>No screenshot saved for this run yet. Save the run again to create one.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function ProgressTab({ player, checks, isAdmin, allPlayers = [], showToast }) {
   const [completions, setCompletions] = useState([]);
   const [loading, setLoading]         = useState(true);
 
@@ -2509,7 +3335,7 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
       w.runs.forEach((r, i) => {
         if (isApproved(checks[runKey(w.week, i)])) {
           sessions++; minutes += runMins; pts += PTS.run;
-          totalKm += parseFloat(r.distance) || 0;
+          if ((r.label || "").toLowerCase().includes("run")) totalKm += parseFloat(r.distance) || 0;
         }
       });
       w.skills.forEach(s => {
@@ -2521,22 +3347,20 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
       // Squad Sessions are bonus approvals, not training sessions for the Sessions Logged / Minutes Active boxes.
       // They still count for points.
       if (isApproved(checks[squadKey(w.week)])) { sessions++; minutes += 20; pts += PTS.squad; }
-      if (isApproved(checks[fridayKey(w.week)])) { sessions++; minutes += 20; pts += PTS.friday; }
     });
     return { sessions, minutes, pts, totalKm };
   }, [checks]);
 
   const weeklyData = useMemo(() => {
     return WEEKS.map(w => {
-      let runs = 0, skills = 0, speed = 0, squad = 0, friday = 0;
+      let runs = 0, skills = 0, speed = 0, squad = 0;
       w.runs.forEach((_, i) => { if (isApproved(checks[runKey(w.week, i)])) runs++; });
       w.skills.forEach(s => { if (isApproved(checks[skillKey(w.week, s.id)])) skills++; });
       w.speed.forEach(s => { if (isApproved(checks[speedKey(w.week, s.id)])) speed++; });
       if (isApproved(checks[squadKey(w.week)])) squad = 1;
-      if (isApproved(checks[fridayKey(w.week)])) friday = 1;
-      const total = runs + skills + speed + squad + friday;
-      const maxPoss = w.runs.length + w.skills.length + w.speed.length + 2;
-      return { week: w.week, runs, skills, speed, squad, friday, total, maxPoss };
+      const total = runs + skills + speed + squad;
+      const maxPoss = w.runs.length + w.skills.length + w.speed.length + 1;
+      return { week: w.week, runs, skills, speed, squad, total, maxPoss };
     });
   }, [checks]);
 
@@ -2555,7 +3379,6 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
           if (speedKey(w.week, s.id) === k) { label = s.label.replace(/^[^\w]+/, "").split(":")[0].trim(); type = "speed"; week = w.week; }
         });
         if (squadKey(w.week) === k) { label = `Squad Session`; type = "squad"; week = w.week; }
-        if (fridayKey(w.week) === k) { label = `Friday Night Hurling`; type = "friday"; week = w.week; }
       });
       const date = c.completed_at
         ? new Date(c.completed_at).toLocaleDateString("en-IE", { day:"numeric", month:"short", year:"numeric" })
@@ -2569,10 +3392,11 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
     skill: { color:"#2e7d32",   bg:"#e8f5e9",    icon:"🏑" },
     speed: { color:"#7b1fa2",   bg:"#f3e5f5",    icon:"⚡" },
     squad: { color:"#c45e00",   bg:"#fff3e0",    icon:"👥" },
-    friday: { color:"#0b6623",   bg:"#e8f5e9",    icon:"🏑" },
   };
 
   const maxWeekActivity = Math.max(...weeklyData.map(w => w.maxPoss), 1);
+
+  if (isAdmin) return <AdminProgressSnapshot allPlayers={allPlayers} />;
 
   if (!player) return (
     <div className="home-wrap" style={{textAlign:"center",paddingTop:40,color:"var(--muted)"}}>
@@ -2589,7 +3413,7 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:26,color:"var(--gold)",letterSpacing:"0.02em"}}>
           {player.name.split(" ")[0]}'s Progress
         </div>
-        <div style={{fontSize:11,opacity:0.65,marginTop:2}}>Fingallians 2015 · Summer Challenge 2026</div>
+        <div style={{fontSize:11,opacity:0.65,marginTop:2}}>Fingallians 2014 · Summer Challenge 2026</div>
         {isAdmin && (
           <div style={{fontSize:10,marginTop:4,background:"rgba(255,255,255,.12)",display:"inline-block",padding:"2px 8px",borderRadius:10,color:"rgba(255,255,255,.75)"}}>
             👁 Viewing as admin
@@ -2630,13 +3454,11 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
             const skillH = (w.skills / w.total || 0) * barH;
             const speedH = (w.speed  / w.total || 0) * barH;
             const squadH = (w.squad  / w.total || 0) * barH;
-            const fridayH = (w.friday / w.total || 0) * barH;
             const allDone = w.total === w.maxPoss;
             return (
               <div key={w.week} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
                 <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:72,gap:1}}>
-                  {w.friday > 0 && <div style={{width:"100%",height:Math.max(fridayH,2),background:"#0b6623",borderRadius:"2px 2px 0 0",minHeight:3}}/>}
-                  {w.squad > 0 && <div style={{width:"100%",height:Math.max(squadH,2),background:"#c45e00",borderRadius:w.friday===0?"2px 2px 0 0":0,minHeight:3}}/>}
+                  {w.squad > 0 && <div style={{width:"100%",height:Math.max(squadH,2),background:"#c45e00",borderRadius:"2px 2px 0 0",minHeight:3}}/>}
                   {w.speed > 0 && <div style={{width:"100%",height:Math.max(speedH,2),background:"#7b1fa2",minHeight:3}}/>}
                   {w.skills > 0 && <div style={{width:"100%",height:Math.max(skillH,2),background:"#2e7d32",minHeight:3}}/>}
                   {w.runs > 0 && <div style={{width:"100%",height:Math.max(runH,2),background:"var(--g)",borderRadius:w.skills===0&&w.squad===0?"2px 2px 0 0":0,minHeight:3}}/>}
@@ -2660,7 +3482,7 @@ function ProgressTab({ player, checks, isAdmin, allPlayers = [] }) {
         )}
       </div>
 
-      <ShareProgressButton player={player} checks={checks} />
+      <RunHistoryProgressSection player={player} showToast={showToast} />
       <div style={{background:"white",borderRadius:14,padding:"14px",border:"1px solid #f0dede",width:"100%"}}>
         <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:14,color:"var(--dark)",letterSpacing:"0.04em",marginBottom:12}}>ACTIVITY LOG</div>
         {loading && <div style={{textAlign:"center",color:"var(--muted)",padding:"16px 0",fontSize:13}}>Loading…</div>}
@@ -3228,9 +4050,9 @@ function WAMessageGenerator({ allPlayers, ptsMap }) {
     ``,
     `Leaderboard so far:`,
     ...top3.map((p,i) => `${medals[i]} ${p.name} – ${ptsMap[p.id]||0} pts`),
-    sorted.length > 3 ? `...and ${sorted.length - 3} more girls logging sessions! 💪` : "",
+    sorted.length > 3 ? `...and ${sorted.length - 3} more lads logging sessions! 💪` : "",
     ``,
-    `Keep it going girls — ${8 - currentWeek} weeks left! Log your runs, skills and squad sessions in the app to keep climbing the leaderboard. 🔥`,
+    `Keep it going lads — ${8 - currentWeek} weeks left! Log your runs, skills and squad sessions in the app to keep climbing the leaderboard. 🔥`,
     ``,
     `Fins Abú 🔴⚪️`,
   ].filter(Boolean).join("\n");
@@ -3300,22 +4122,11 @@ function downloadCSV(allPlayers, ptsMap, weeklyMap) {
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
   a.href = url;
-  a.download = `fingallians-2015-girls-challenge-${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = `fingallians-2014-girls-challenge-${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-
-function safeDublinDate(value, fallback = "") {
-  if (!value) return fallback;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return fallback;
-  return d.toLocaleString("en-IE", {
-    timeZone: "Europe/Dublin",
-    day:"numeric", month:"short", year:"numeric",
-    hour:"2-digit", minute:"2-digit"
-  });
-}
 
 function ConsentLog() {
   const [records, setRecords] = useState([]);
@@ -3388,8 +4199,17 @@ function ConsentLog() {
         const icon  = isWhatsApp ? "💬" : "📋";
         const label = isWhatsApp ? "WhatsApp consent" : isReaccept ? "T&Cs re-agreed" : "T&Cs at signup";
 
-        const createdAt = safeDublinDate(r.created_at, "");
-        const acceptedAt = safeDublinDate(r.new_value, createdAt);
+        const createdAt = r.created_at ? new Date(r.created_at).toLocaleString("en-IE", {
+          day:"numeric", month:"short", year:"numeric",
+          hour:"2-digit", minute:"2-digit"
+        }) : "";
+
+        const acceptedAt = r.new_value && !Number.isNaN(Date.parse(r.new_value))
+          ? new Date(r.new_value).toLocaleString("en-IE", {
+              day:"numeric", month:"short", year:"numeric",
+              hour:"2-digit", minute:"2-digit"
+            })
+          : createdAt;
 
         return (
           <div key={i} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 0",
