@@ -757,7 +757,14 @@ function ChildVersionComingSoon({ player, showToast }) {
 
 function ChildSimpleView({ player, checks, playerLoaded, pts, weeksDone, showToast, onToggle }) {
   const currentWeekIndex = Math.min(Math.max(Math.floor((new Date() - new Date("2026-06-29")) / (7*24*60*60*1000)), 0), 7);
-  const w = WEEKS[currentWeekIndex];
+  const [activeWeekIndex, setActiveWeekIndex] = useState(currentWeekIndex);
+
+  useEffect(() => {
+    setActiveWeekIndex(idx => Math.min(idx, currentWeekIndex));
+  }, [currentWeekIndex]);
+
+  const visibleWeeks = WEEKS.slice(0, currentWeekIndex + 1);
+  const w = WEEKS[Math.min(activeWeekIndex, currentWeekIndex)];
   const ps = PHASE_STYLE[w.phase];
   const wPts = weekPts(w, checks);
   const wMax = weekMaxPts(w);
@@ -789,7 +796,7 @@ function ChildSimpleView({ player, checks, playerLoaded, pts, weeksDone, showToa
         <div style={{display:"inline-flex",alignItems:"center",gap:8,background:"rgba(255,255,255,0.18)",borderRadius:999,padding:"7px 12px",fontSize:13,fontWeight:900,letterSpacing:"0.04em",marginBottom:12}}>
           {player?.name ? `${player.name.split(" ")[0]}'s App` : "Your App"}
         </div>
-        <h2>THIS WEEK'S CHALLENGE</h2>
+        <h2>{activeWeekIndex === currentWeekIndex ? "THIS WEEK\'S CHALLENGE" : "CATCH-UP WEEK"}</h2>
         <div className="player-name">👤 {player.name}</div>
         <div style={{fontSize:13,opacity:0.86,marginTop:6}}>Week {w.week} of 8 · {w.dates}</div>
         <div className="pts-row">
@@ -801,14 +808,32 @@ function ChildSimpleView({ player, checks, playerLoaded, pts, weeksDone, showToa
 
       <div style={{background:"white",borderRadius:"var(--radius)",boxShadow:"var(--shadow)",padding:"14px 16px",marginBottom:12}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-          <strong style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,color:"var(--g)"}}>This week</strong>
+          <strong style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,color:"var(--g)"}}>{activeWeekIndex === currentWeekIndex ? "This week" : `Week ${w.week}`}</strong>
           <span style={{fontSize:13,color:"var(--mid)"}}>{wPts}/{wMax} pts</span>
         </div>
         <div className="prog"><div style={{width:`${pct}%`,background:ps.accent}} /></div>
       </div>
 
       <div style={{background:"white",borderRadius:"var(--radius)",boxShadow:"var(--shadow)",padding:"12px 14px",marginBottom:12,textAlign:"center",fontSize:13,color:"var(--mid)",lineHeight:1.6}}>
-        Tap an activity to mark it complete. It will sync back to the parent version automatically.
+        Missed a week? No problem — you can go back and complete any earlier activities. Future weeks will appear when they unlock.
+      </div>
+
+      <div style={{background:"white",borderRadius:"var(--radius)",boxShadow:"var(--shadow)",padding:"12px 14px",marginBottom:12}}>
+        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:18,color:"var(--g)",marginBottom:8}}>Choose week</div>
+        <div className="week-grid">
+          {visibleWeeks.map((wk, i) => {
+            const p2 = weekPts(wk, checks);
+            const max = weekMaxPts(wk);
+            const ps2 = PHASE_STYLE[wk.phase];
+            return (
+              <div key={wk.week} className={`wk-tile${activeWeekIndex===i?" active":""}`} style={activeWeekIndex===i?{borderColor:ps2.accent}:{}} onClick={() => setActiveWeekIndex(i)}>
+                <div className="wn" style={{color:ps2.accent}}>W{wk.week}</div>
+                <div className="wp">{wk.dates.split("–")[0]}</div>
+                <div className="wbar"><div className="wbar-fill" style={{width:`${Math.round(p2/max*100)}%`,background:ps2.accent}}/></div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <WeekDetail
