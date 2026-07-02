@@ -814,12 +814,30 @@ function ChildSimpleView({ player, checks, playerLoaded, pts, weeksDone, showToa
         <div className="prog"><div style={{width:`${pct}%`,background:ps.accent}} /></div>
       </div>
 
+
+      <WeekDetail
+        w={w}
+        ps={ps}
+        pct={pct}
+        wPts={wPts}
+        wMax={wMax}
+        checks={checks}
+        onToggle={onToggle}
+        player={player}
+        showToast={showToast}
+      />
+
+
+      <div style={{background:"white",borderRadius:"var(--radius)",boxShadow:"var(--shadow)",padding:"12px 14px",marginTop:12,marginBottom:12,textAlign:"center",fontSize:13,color:"var(--mid)",lineHeight:1.6}}>
+        💡 Tap an activity to mark it complete.
+      </div>
+
       <div style={{background:"white",borderRadius:"var(--radius)",boxShadow:"var(--shadow)",padding:"12px 14px",marginBottom:12,textAlign:"center",fontSize:13,color:"var(--mid)",lineHeight:1.6}}>
         Missed a week? No problem — you can go back and complete any earlier activities. Future weeks will appear when they unlock.
       </div>
 
       <div style={{background:"white",borderRadius:"var(--radius)",boxShadow:"var(--shadow)",padding:"12px 14px",marginBottom:12}}>
-        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:18,color:"var(--g)",marginBottom:8}}>Choose week</div>
+        <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:18,color:"var(--g)",marginBottom:8}}>Catch up on previous weeks</div>
         <div className="week-grid">
           {visibleWeeks.map((wk, i) => {
             const p2 = weekPts(wk, checks);
@@ -835,18 +853,6 @@ function ChildSimpleView({ player, checks, playerLoaded, pts, weeksDone, showToa
           })}
         </div>
       </div>
-
-      <WeekDetail
-        w={w}
-        ps={ps}
-        pct={pct}
-        wPts={wPts}
-        wMax={wMax}
-        checks={checks}
-        onToggle={onToggle}
-        player={player}
-        showToast={showToast}
-      />
 
       <div style={{textAlign:"center",fontSize:12,color:"var(--muted)",marginTop:16,paddingBottom:18}}>
         Parent Version has WhatsApp, consent, admin and full plan access.
