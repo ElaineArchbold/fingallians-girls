@@ -2758,6 +2758,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
 function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToast, onGoProgress, isChildView = false }) {
   const [expandedSkill, setExpandedSkill] = useState(null);
   const [expandedSquad, setExpandedSquad] = useState(false);
+  const [expandedFriday, setExpandedFriday] = useState(false);
   const [playingVideo, setPlayingVideo]   = useState(null);
   const canToggle = !!player;
   const squadVideos = [
@@ -2965,6 +2966,48 @@ function WeekDetail({ w, ps, pct, wPts, wMax, checks, onToggle, player, showToas
 
                 {canToggle && (
                   <button className={`squad-mark${done?" done":""}`} onClick={()=>onToggle(k,PTS.squad,w.squad.label)}>
+                    {pending ? "AWAITING APPROVAL" : returned ? "↺ SUBMIT AGAIN" : done ? "✕ REMOVE" : "✓ SUBMIT FOR APPROVAL"}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {(() => {
+        const k = fridayKey(w.week);
+        const done = isApproved(checks[k]);
+        const pending = isPending(checks[k]);
+        const returned = isRejected(checks[k]);
+        return (
+          <div className="squad-card" style={{background:"linear-gradient(135deg,#0b6623 0%,#1e6b2e 100%)"}}>
+            <div className="squad-hd" onClick={() => setExpandedFriday(v => !v)}>
+              <div className={`skill-check${done?" done":""}`} style={{flexShrink:0,cursor:"pointer",borderColor:pending?"#f5a623":returned?"#e65100":undefined,background:pending?"#fff3e0":returned?"#ffebee":undefined,color:pending?"#e65100":returned?"#c62828":undefined}}
+                onClick={e=>{e.stopPropagation(); setExpandedFriday(v=>!v);}}>
+                {done?"✓":pending?"…":returned?"↺":""}
+              </div>
+              <div className="squad-hd-text">
+                <div className="squad-icon">🏑</div>
+                <div className="squad-name">Friday Night Hurling</div>
+                <div className="squad-type">
+                  +{PTS.friday} pts {pending ? "· Awaiting approval" : returned ? "· Returned" : ""}
+                </div>
+              </div>
+              <div className="squad-pts">{pending ? "Pending" : returned ? "Returned" : `+${PTS.friday}`}</div>
+              <div style={{fontSize:20,color:"rgba(255,255,255,0.65)",transition:"transform 0.2s",transform:expandedFriday?"rotate(180deg)":"none",justifySelf:"end"}}>⌄</div>
+            </div>
+            {expandedFriday && (
+              <div className="squad-body">
+                <p className="squad-desc">Did you attend Friday Night Hurling this week?</p>
+                <div className="squad-cta">🏑 Submit this for approval. We'll check with the coaches and approve once you've been marked present.</div>
+                {returned && (
+                  <div style={{background:"#ffebee",border:"1px solid #ffcdd2",color:"#c62828",borderRadius:10,padding:"10px 12px",fontSize:13,fontWeight:800,marginBottom:12}}>
+                    ↺ Returned by admin — please check with the coaches and submit again if needed.
+                  </div>
+                )}
+                {canToggle && (
+                  <button className={`squad-mark${done?" done":""}`} onClick={()=>onToggle(k,PTS.friday,"Friday Night Hurling")}>
                     {pending ? "AWAITING APPROVAL" : returned ? "↺ SUBMIT AGAIN" : done ? "✕ REMOVE" : "✓ SUBMIT FOR APPROVAL"}
                   </button>
                 )}
