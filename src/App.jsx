@@ -2225,8 +2225,18 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
   const watchRef = useRef(null);
   const timerRef = useRef(null);
   const pausedRef = useRef(false);
+  const pointsRef = useRef([]);
+  const elapsedRef = useRef(0);
+  const startedAtRef = useRef(null);
+  const wakeLockRef = useRef(null);
+  const holdTimerRef = useRef(null);
+  const holdStartRef = useRef(0);
+  const lastVoiceKmRef = useRef(0);
+  const [finishHoldPct, setFinishHoldPct] = useState(0);
+  const [gpsStatus, setGpsStatus] = useState("");
 
   const storageKey = `runLog:${APP_SQUAD}:${taskKey}`;
+  const draftKey = `runDraft:${APP_SQUAD}:${taskKey}`;
   const historyKey = `runHistory:${APP_SQUAD}:${player?.id || "unknown"}`;
   const hasSavedRunForThisTask = !!savedRun && savedRun.taskKey === taskKey;
 
@@ -2242,24 +2252,84 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     } catch (_) {}
   }, [storageKey, historyKey]);
 
+  useEffect(() => { pointsRef.current = points; }, [points]);
+  useEffect(() => { elapsedRef.current = elapsed; }, [elapsed]);
+  useEffect(() => { startedAtRef.current = startedAt; }, [startedAt]);
+  useEffect(() => { lastVoiceKmRef.current = lastVoiceKm; }, [lastVoiceKm]);
+
   useEffect(() => {
     if (open) {
       stopWatchingOnly();
       setTracking(false);
       setPaused(false);
       pausedRef.current = false;
-      setStartedAt(null);
-      setElapsed(0);
-      setPoints([]);
-      setLastVoiceKm(0);
+      setFinishHoldPct(0);
+      setGpsStatus("");
       setShareImageUrl(null);
       setSelectedRun(null);
       setCompletedRunPromptOpen(false);
       resetManualFields();
-    }
-  }, [open, run.distance]);
 
-  useEffect(() => () => stopWatchingOnly(), []);
+      try {
+        const draft = JSON.parse(localStorage.getItem(draftKey) || "null");
+        if (draft && Array.isArray(draft.points) && draft.points.length) {
+          const resume = window.confirm(`Resume unfinished run?\\n\\nDistance: ${Number(draft.distanceKm || 0).toFixed(2)} km\\nTime: ${fmtTime(Number(draft.elapsed || 0))}`);
+          if (resume) {
+            setPoints(draft.points);
+            pointsRef.current = draft.points;
+            setElapsed(Number(draft.elapsed || 0));
+            elapsedRef.current = Number(draft.elapsed || 0);
+            setStartedAt(draft.startedAt || Date.now());
+            startedAtRef.current = draft.startedAt || Date.now();
+            setLastVoiceKm(Math.floor(Number(draft.distanceKm || 0) * 2) / 2);
+            lastVoiceKmRef.current = Math.floor(Number(draft.distanceKm || 0) * 2) / 2;
+            setGpsStatus("Draft route restored. Tap Resume GPS Run to keep recording.");
+          } else {
+            localStorage.removeItem(draftKey);
+            setStartedAt(null);
+            setElapsed(0);
+            setPoints([]);
+            setLastVoiceKm(0);
+          }
+        } else {
+          setStartedAt(null);
+          setElapsed(0);
+          setPoints([]);
+          setLastVoiceKm(0);
+        }
+      } catch (_) {
+        setStartedAt(null);
+        setElapsed(0);
+        setPoints([]);
+        setLastVoiceKm(0);
+      }
+    }
+  }, [open, run.distance, draftKey]);
+
+  useEffect(() => {
+    function handleVisibility() {
+      if (tracking) {
+        saveDraft(pointsRef.current, elapsedRef.current);
+        if (document.visibilityState === "visible") requestWakeLock();
+      }
+    }
+    function handlePageHide() {
+      if (tracking || pointsRef.current.length) saveDraft(pointsRef.current, elapsedRef.current);
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
+    };
+  }, [tracking, draftKey]);
+
+  useEffect(() => () => {
+    stopWatchingOnly();
+    clearFinishHold();
+  }, []);
 
   function toRad(v) { return (v * Math.PI) / 180; }
   function distanceBetween(a, b) {
@@ -2291,15 +2361,76 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     setManualMinutes("");
     setManualNote("");
   }
-  function closeRunModal() {
+
+  function saveDraft(nextPoints = pointsRef.current, nextElapsed = elapsedRef.current) {
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({
+        type: "gps-draft",
+        week,
+        taskKey,
+        label: run.label,
+        target: run.distance,
+        points: nextPoints,
+        elapsed: nextElapsed,
+        distanceKm: Number(totalDistanceKm(nextPoints).toFixed(2)),
+        startedAt: startedAtRef.current || Date.now(),
+        updatedAt: new Date().toISOString()
+      }));
+    } catch (_) {}
+  }
+
+  function clearDraft() {
+    try { localStorage.removeItem(draftKey); } catch (_) {}
+  }
+
+  async function requestWakeLock() {
+    try {
+      if ("wakeLock" in navigator && !wakeLockRef.current) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+        wakeLockRef.current.addEventListener?.("release", () => { wakeLockRef.current = null; });
+      }
+    } catch (_) {}
+  }
+
+  async function releaseWakeLock() {
+    try {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+    } catch (_) {
+      wakeLockRef.current = null;
+    }
+  }
+
+  function discardCurrentRun() {
     stopWatchingOnly();
+    clearFinishHold();
+    clearDraft();
     setTracking(false);
     setPaused(false);
     pausedRef.current = false;
     setStartedAt(null);
+    startedAtRef.current = null;
     setElapsed(0);
+    elapsedRef.current = 0;
     setPoints([]);
+    pointsRef.current = [];
     setLastVoiceKm(0);
+    lastVoiceKmRef.current = 0;
+    setGpsStatus("");
+    setFinishHoldPct(0);
+  }
+
+  function closeRunModal() {
+    if (tracking || pointsRef.current.length > 0) {
+      const discard = window.confirm("Discard this run? Your current GPS run will not be saved.");
+      if (!discard) {
+        showToast?.("Run kept open. Use Hold to Finish when you are done.");
+        return;
+      }
+    }
+    discardCurrentRun();
     setShareImageUrl(null);
     setSelectedRun(null);
     setCompletedRunPromptOpen(false);
@@ -2317,6 +2448,16 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    releaseWakeLock();
+  }
+
+  function clearFinishHold() {
+    if (holdTimerRef.current) {
+      clearInterval(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    holdStartRef.current = 0;
+    setFinishHoldPct(0);
   }
   function speak(text) {
     try {
@@ -2384,60 +2525,120 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       setMode("manual");
       return;
     }
-    setPoints([]);
-    setElapsed(0);
+
+    const hasDraftPoints = pointsRef.current.length > 0;
+    if (!hasDraftPoints) {
+      setPoints([]);
+      pointsRef.current = [];
+      setElapsed(0);
+      elapsedRef.current = 0;
+      setLastVoiceKm(0);
+      lastVoiceKmRef.current = 0;
+      clearDraft();
+    }
+
     setPaused(false);
     pausedRef.current = false;
-    setLastVoiceKm(0);
-    const start = Date.now();
+    setGpsStatus("Finding GPS signal… keep the app open where possible.");
+    const start = startedAtRef.current || Date.now();
     setStartedAt(start);
+    startedAtRef.current = start;
     setTracking(true);
+    requestWakeLock();
+
+    if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
-      if (!pausedRef.current) setElapsed(v => v + 1);
+      if (!pausedRef.current) {
+        setElapsed(v => {
+          const next = v + 1;
+          elapsedRef.current = next;
+          if (next % 5 === 0) saveDraft(pointsRef.current, next);
+          return next;
+        });
+      }
     }, 1000);
+
+    if (watchRef.current) {
+      try { navigator.geolocation.clearWatch(watchRef.current); } catch (_) {}
+      watchRef.current = null;
+    }
+
     watchRef.current = navigator.geolocation.watchPosition(
       pos => {
         if (pausedRef.current) return;
+
+        const accuracy = Number(pos.coords.accuracy || 999);
         const next = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
-          acc: pos.coords.accuracy,
+          acc: accuracy,
           ts: Date.now()
         };
+
+        if (!Number.isFinite(next.lat) || !Number.isFinite(next.lng)) return;
+
+        if (accuracy > 60) {
+          setGpsStatus(`Weak GPS signal (${Math.round(accuracy)}m). Still recording — move into open sky if possible.`);
+          saveDraft(pointsRef.current, elapsedRef.current);
+          return;
+        }
+
         setPoints(prev => {
           const last = prev[prev.length - 1];
-          if (last && distanceBetween(last, next) < 0.005) return prev;
+
+          if (last) {
+            const segmentKm = distanceBetween(last, next);
+            const seconds = Math.max(1, (next.ts - (last.ts || next.ts)) / 1000);
+            const speedKmh = segmentKm / (seconds / 3600);
+
+            if (segmentKm < 0.003) return prev;
+            if (segmentKm > 0.35 && speedKmh > 28) {
+              setGpsStatus("Ignored one jumpy GPS point. Still tracking from the last good point.");
+              return prev;
+            }
+          }
+
           const updated = [...prev, next];
+          pointsRef.current = updated;
           const km = totalDistanceKm(updated);
           const voiceKm = Math.floor(km * 2) / 2;
-          if (voiceKm >= 0.5 && voiceKm > lastVoiceKm) {
+          if (voiceKm >= 0.5 && voiceKm > lastVoiceKmRef.current) {
+            lastVoiceKmRef.current = voiceKm;
             setLastVoiceKm(voiceKm);
             speak(`${voiceKm} kilometres completed`);
           }
+          setGpsStatus(`GPS active · accuracy ${Math.round(accuracy)}m`);
+          saveDraft(updated, elapsedRef.current);
           return updated;
         });
       },
       err => {
         console.error("Run GPS error", err);
-        showToast?.("GPS could not start. Check location permissions or add manually.");
-        setTracking(false);
-        stopWatchingOnly();
+        setGpsStatus("GPS signal dropped. Keep moving — the app will reconnect from your last good point.");
+        showToast?.("GPS signal dropped briefly. Still recording from the last good point.");
+        saveDraft(pointsRef.current, elapsedRef.current);
       },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 30000 }
     );
   }
+
   function togglePause() {
     pausedRef.current = !pausedRef.current;
     setPaused(pausedRef.current);
+    saveDraft(pointsRef.current, elapsedRef.current);
     showToast?.(pausedRef.current ? "⏸️ Run paused" : "▶️ Run resumed");
   }
+
   function finishGps() {
+    const finalPoints = pointsRef.current;
+    const finalElapsed = elapsedRef.current || elapsed;
     stopWatchingOnly();
+    clearFinishHold();
     setTracking(false);
     setPaused(false);
     pausedRef.current = false;
-    const distanceKm = Number(totalDistanceKm(points).toFixed(2));
-    const durationMin = Math.max(1, Math.round(elapsed / 60));
+    const distanceKm = Number(totalDistanceKm(finalPoints).toFixed(2));
+    const durationMin = Math.max(1, Math.round(finalElapsed / 60));
     const saved = {
       type: "gps",
       week,
@@ -2447,7 +2648,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       distanceKm,
       durationMin,
       pace: distanceKm > 0 && durationMin ? Number((durationMin / distanceKm).toFixed(2)) : null,
-      points,
+      points: finalPoints,
       savedAt: new Date().toISOString()
     };
     const imageUrl = createShareImage(saved, { silent: true });
@@ -2455,6 +2656,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     setSavedRun(savedWithImage);
     setShareImageUrl(imageUrl);
     try { localStorage.setItem(storageKey, JSON.stringify(savedWithImage)); } catch (_) {}
+    clearDraft();
     setManualDistance(String(distanceKm));
     setManualMinutes(String(durationMin));
     const target = targetKm();
@@ -2465,6 +2667,37 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       : `Run saved, but target is ${target} km. It will not count yet.`);
     if (meetsTarget && !done && canToggle) onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
   }
+
+  function beginFinishHold() {
+    if (!tracking) {
+      startGps();
+      return;
+    }
+    if (holdTimerRef.current) return;
+    if (navigator.vibrate) {
+      try { navigator.vibrate(30); } catch (_) {}
+    }
+    holdStartRef.current = Date.now();
+    setFinishHoldPct(0);
+    holdTimerRef.current = setInterval(() => {
+      const pct = Math.min(100, ((Date.now() - holdStartRef.current) / 2200) * 100);
+      setFinishHoldPct(pct);
+      if (pct >= 100) {
+        clearFinishHold();
+        if (navigator.vibrate) {
+          try { navigator.vibrate([40, 40, 40]); } catch (_) {}
+        }
+        finishGps();
+      }
+    }, 40);
+  }
+
+  function cancelFinishHold() {
+    if (holdTimerRef.current) {
+      clearFinishHold();
+    }
+  }
+
   function saveManual() {
     const distanceKm = Number(manualDistance);
     const durationMin = null;
@@ -2489,6 +2722,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     setSavedRun(savedWithImage);
     setShareImageUrl(imageUrl);
     try { localStorage.setItem(storageKey, JSON.stringify(savedWithImage)); } catch (_) {}
+    clearDraft();
     const target = targetKm();
     const meetsTarget = !target || distanceKm >= target;
     showToast?.(meetsTarget
@@ -2724,12 +2958,23 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
                   {targetHit && <div style={{position:"absolute",right:10,top:10,background:"#2e7d32",color:"#fff",borderRadius:999,padding:"5px 9px",fontSize:11,fontWeight:900,zIndex:500}}>🏅 Target achieved</div>}
                 </div>
 
-                <div style={{display:"grid",gridTemplateColumns:tracking?"1fr 1fr":"1fr",gap:8}}>
+                <div style={{display:"grid",gridTemplateColumns:tracking?"1fr 1.2fr":"1fr",gap:8}}>
                   {tracking && <button onClick={togglePause} style={{border:0,background:"#ff9800",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}>{paused ? "▶ RESUME" : "⏸ PAUSE"}</button>}
-                  <button onClick={tracking ? finishGps : startGps} style={{border:0,background:tracking?"#c62828":"var(--g)",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}>
-                    {tracking ? "■ FINISH RUN" : "▶ START GPS RUN"}
+                  <button
+                    onMouseDown={beginFinishHold}
+                    onMouseUp={cancelFinishHold}
+                    onMouseLeave={cancelFinishHold}
+                    onTouchStart={beginFinishHold}
+                    onTouchEnd={cancelFinishHold}
+                    onTouchCancel={cancelFinishHold}
+                    onClick={(e)=>e.preventDefault()}
+                    style={{border:0,background:tracking?`linear-gradient(90deg,#8b1a1a ${finishHoldPct}%,#c62828 ${finishHoldPct}%)`:"var(--g)",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit",touchAction:"none"}}
+                  >
+                    {tracking ? "HOLD TO FINISH RUN" : (points.length ? "▶ RESUME GPS RUN" : "▶ START GPS RUN")}
                   </button>
                 </div>
+                {tracking && <div style={{fontSize:11,color:"var(--muted)",marginTop:6,fontWeight:800}}>Hold the finish button for 2 seconds to save. Tap will not finish by accident.</div>}
+                {gpsStatus && <div style={{fontSize:11,color:gpsStatus.includes("Weak") || gpsStatus.includes("dropped") ? "#b26a00" : "var(--muted)",marginTop:6,fontWeight:800}}>{gpsStatus}</div>}
                 {target && <div style={{fontSize:11,color:targetHit?"#2e7d32":"var(--muted)",marginTop:8,fontWeight:800}}>{targetHit ? "✅ Target distance reached" : `Target: ${target} km`}</div>}
               </div>
             ) : (
