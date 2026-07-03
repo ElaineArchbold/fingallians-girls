@@ -2479,11 +2479,13 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
   const [finishHoldPct, setFinishHoldPct] = useState(0);
   const [gpsStatus, setGpsStatus] = useState("");
 
-  const storageKey = `runLog:${APP_SQUAD}:${taskKey}`;
+  const playerRunId = player?.id || "unknown";
+  const storageKey = `runLog:${APP_SQUAD}:${playerRunId}:${taskKey}`;
   const playerDraftId = player?.id || "unknown";
   const draftKey = `runDraft:${APP_SQUAD}:${playerDraftId}:${taskKey}`;
   const legacyDraftKey = `runDraft:${APP_SQUAD}:${taskKey}`;
-  const historyKey = `runHistory:${APP_SQUAD}:${player?.id || "unknown"}`;
+  const historyKey = `runHistory:${APP_SQUAD}:${playerRunId}`;
+  const archiveKey = `runArchive:${APP_SQUAD}:${playerRunId}`;
   const hasSavedRunForThisTask = !!savedRun && savedRun.taskKey === taskKey;
 
   useEffect(() => {
@@ -2724,40 +2726,76 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     try {
       const runEntry = {
         ...entry,
-        id: entry.id || `latest:${player?.id || "unknown"}`,
+        id: entry.id || `${taskKey}:${Date.now()}`,
         playerId: player?.id || null,
         playerName: player?.name || "",
         runIndex,
         savedAt: entry.savedAt || new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      const next = [runEntry];
+
+      const existing = JSON.parse(localStorage.getItem(historyKey) || "[]");
+      const next = [runEntry, ...(Array.isArray(existing) ? existing.filter(r => r?.taskKey !== taskKey) : [])].slice(0, 20);
       setHistory(next);
       localStorage.setItem(historyKey, JSON.stringify(next));
+
+      const archive = JSON.parse(localStorage.getItem(archiveKey) || "[]");
+      const archiveNext = [runEntry, ...(Array.isArray(archive) ? archive : [])].slice(0, 50);
+      localStorage.setItem(archiveKey, JSON.stringify(archiveNext));
+
       return runEntry;
     } catch (_) {
       return entry;
     }
   }
 
-  function removeCompletedRun() {
-    if (!done) return;
+  async function removeCompletedRun() {
+    setCompletedRunPromptOpen(false);
+
+    if (!savedRun) {
+      showToast?.("No saved run found.");
+      return;
+    }
+
+    if (savedRun.type === "gps") {
+      setSelectedRun(savedRun);
+      showToast?.("GPS proof is protected and cannot be removed here.");
+      return;
+    }
+
+    const ok = window.confirm("Remove this manual entry and uncheck the run?");
+    if (!ok) return;
 
     try {
-      setHistory([]);
-      localStorage.setItem(historyKey, JSON.stringify([]));
+      const existing = JSON.parse(localStorage.getItem(historyKey) || "[]");
+      const next = Array.isArray(existing) ? existing.filter(r => r?.taskKey !== taskKey) : [];
+      setHistory(next);
+      localStorage.setItem(historyKey, JSON.stringify(next));
       localStorage.removeItem(storageKey);
+      localStorage.removeItem(`runProofLatest:${APP_SQUAD}:${playerRunId}:${taskKey}`);
       setSavedRun(null);
       setSelectedRun(null);
       setShareImageUrl(null);
+
+      try {
+        await sb
+          .from("run_proofs")
+          .delete()
+          .eq("squad", APP_SQUAD)
+          .eq("player_id", player?.id)
+          .eq("task_key", taskKey)
+          .eq("run_type", "manual");
+      } catch (e) {
+        console.error("Manual run proof delete failed", e);
+      }
     } catch (e) {
-      console.error("Local run removal failed", e);
+      console.error("Manual run removal failed", e);
     }
 
-    if (canToggle) {
+    if (done && canToggle) {
       onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
     }
-    showToast?.("↩️ Run removed and challenge unchecked");
+    showToast?.("Manual run removed and challenge unchecked.");
   }
 
   function formatRunDateTime(ts) {
@@ -2917,7 +2955,10 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     saveRunProofToSupabase(player, savedWithImage, runIndex);
     setSavedRun(savedWithImage);
     setShareImageUrl(imageUrl);
-    try { localStorage.setItem(storageKey, JSON.stringify(savedWithImage)); } catch (_) {}
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(savedWithImage));
+      localStorage.setItem(`runProofLatest:${APP_SQUAD}:${playerRunId}:${taskKey}`, JSON.stringify(savedWithImage));
+    } catch (_) {}
     clearDraft();
     setManualDistance(String(distanceKm));
     setManualMinutes(String(durationMin));
@@ -2995,7 +3036,10 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     saveRunProofToSupabase(player, savedWithImage, runIndex);
     setSavedRun(savedWithImage);
     setShareImageUrl(imageUrl);
-    try { localStorage.setItem(storageKey, JSON.stringify(savedWithImage)); } catch (_) {}
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(savedWithImage));
+      localStorage.setItem(`runProofLatest:${APP_SQUAD}:${playerRunId}:${taskKey}`, JSON.stringify(savedWithImage));
+    } catch (_) {}
     clearDraft();
     const target = targetKm();
     const meetsTarget = !target || distanceKm >= target;
@@ -3004,6 +3048,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       : `Run saved, but target is ${target} km. It will not count yet.`);
     if (meetsTarget && !done && canToggle) onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
     resetManualFields();
+    setOpen(false);
   }
   function drawRoutePreview(ctx, routePoints, x, y, w, h) {
     ctx.fillStyle = "#e8f5e9";
@@ -3139,11 +3184,9 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
           if (!canToggle) return;
           if (done) {
             if (hasSavedRunForThisTask) {
-              setCompletedRunPromptOpen(true);
+              setSelectedRun(savedRun);
             } else {
-              // Old completed runs have no saved run/logger screenshot, so keep the old behaviour:
-              // clicking the pill simply toggles the run off again.
-              onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
+              setCompletedRunPromptOpen(true);
             }
           } else {
             setOpen(true);
@@ -3160,13 +3203,15 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:26,color:"var(--g)",letterSpacing:"0.02em"}}>RUN ALREADY COMPLETED</div>
             <>
               <div style={{fontSize:13,color:"var(--muted)",lineHeight:1.45,margin:"6px 0 14px"}}>
-                This run has already been completed. You can view/share the saved screenshot, or remove only runs saved with the run logger.
+                This run has already been completed. GPS runs are protected; manual entries can be removed from the saved run preview.
               </div>
               <div style={{display:"grid",gap:8}}>
                 <button
                   onClick={() => {
                     setCompletedRunPromptOpen(false);
-                    if (isChildView) {
+                    if (savedRun) {
+                      setSelectedRun(savedRun);
+                    } else if (isChildView) {
                       showToast?.("Ask your parent to open the Progress tab to view and share the saved screenshot.");
                     } else {
                       onGoProgress?.();
@@ -3177,17 +3222,6 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
                 >
                   📸 View / Share Screenshot
                 </button>
-                {hasSavedRunForThisTask && (
-                  <button
-                    onClick={() => {
-                      setCompletedRunPromptOpen(false);
-                      removeCompletedRun();
-                    }}
-                    style={{border:"1px solid #ead7d7",background:"#fff",color:"#a31621",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}
-                  >
-                    ✕ Remove Run
-                  </button>
-                )}
                 <button
                   onClick={() => setCompletedRunPromptOpen(false)}
                   style={{border:0,background:"#f8f1f1",color:"var(--muted)",borderRadius:12,padding:"10px 12px",fontWeight:900,fontFamily:"inherit"}}
@@ -3196,6 +3230,70 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
                 </button>
               </div>
             </>
+          </div>
+        </div>
+      )}
+
+      {selectedRun && !open && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:10020,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"12px 16px",overflowY:"auto"}} onClick={() => setSelectedRun(null)}>
+          <div style={{width:"min(520px,100%)",maxHeight:"calc(100vh - 24px)",overflowY:"auto",background:"#fff",borderRadius:18,padding:16,boxShadow:"0 20px 60px rgba(0,0,0,0.32)",position:"relative"}} onClick={e=>e.stopPropagation()}>
+            <div style={{position:"sticky",top:-16,zIndex:2,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:8,margin:"-16px -16px 10px",padding:"14px 58px 10px",textAlign:"center",borderRadius:"18px 18px 0 0",borderBottom:"1px solid #f0dede"}}>
+              <div>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:26,color:"var(--g)",letterSpacing:"0.02em",textAlign:"center"}}>SAVED RUN</div>
+                <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  Week {selectedRun.week} · {selectedRun.type === "gps" ? "GPS run" : "Manual entry"}
+                </div>
+              </div>
+              <button onClick={() => setSelectedRun(null)} style={{position:"absolute",right:14,top:12,border:0,background:"#f8f1f1",color:"var(--g)",borderRadius:999,width:34,height:34,fontSize:20,fontWeight:900,cursor:"pointer"}}>×</button>
+            </div>
+
+            {selectedRun.shareImageUrl ? (
+              <img src={selectedRun.shareImageUrl} alt="Saved run screenshot" style={{width:"100%",maxHeight:"55vh",objectFit:"contain",borderRadius:14,border:"1px solid #f0dede",display:"block",marginBottom:12}} />
+            ) : (
+              <div style={{background:"#fff7e6",border:"1px solid #ffd6a6",borderRadius:14,padding:12,fontSize:13,color:"#8a4b00",lineHeight:1.45,marginBottom:12}}>
+                No screenshot was found, but the saved run details are still protected.
+              </div>
+            )}
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:12}}>
+              {[
+                ["Distance", selectedRun.distanceKm != null ? `${Number(selectedRun.distanceKm).toFixed(2)} km` : "—"],
+                ["Time", selectedRun.durationMin != null ? `${selectedRun.durationMin} min` : "—"],
+                ["Pace", selectedRun.pace ? `${selectedRun.pace} min/km` : "—"],
+                ["Saved", formatRunDateTime(selectedRun.savedAt || selectedRun.updatedAt) || "—"],
+              ].map(([label,value]) => (
+                <div key={label} style={{background:"#f8f1f1",borderRadius:12,padding:"9px 8px",textAlign:"center"}}>
+                  <div style={{fontSize:10,color:"var(--muted)",fontWeight:900,textTransform:"uppercase",letterSpacing:"0.06em"}}>{label}</div>
+                  <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:22,color:"var(--g)",lineHeight:1.05,marginTop:2}}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {Array.isArray(selectedRun.points) && selectedRun.points.length > 1 && (
+              <MiniRouteMap points={selectedRun.points} height={170} />
+            )}
+
+            <div style={{display:"grid",gap:8,marginTop:12}}>
+              <button
+                onClick={() => shareSaveImage(selectedRun)}
+                style={{border:0,background:"var(--g)",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}
+              >
+                📤 Share / Save Screenshot
+              </button>
+
+              {selectedRun.type === "manual" ? (
+                <button
+                  onClick={removeCompletedRun}
+                  style={{border:"1px solid #ead7d7",background:"#fff",color:"#a31621",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit"}}
+                >
+                  ✕ Remove Manual Entry
+                </button>
+              ) : (
+                <div style={{background:"#f8f1f1",borderRadius:12,padding:"10px 12px",fontSize:12,color:"var(--muted)",fontWeight:800,textAlign:"center",lineHeight:1.4}}>
+                  GPS runs are protected and cannot be removed from here.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
