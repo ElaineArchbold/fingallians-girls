@@ -2480,7 +2480,9 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
   const [gpsStatus, setGpsStatus] = useState("");
 
   const storageKey = `runLog:${APP_SQUAD}:${taskKey}`;
-  const draftKey = `runDraft:${APP_SQUAD}:${taskKey}`;
+  const playerDraftId = player?.id || "unknown";
+  const draftKey = `runDraft:${APP_SQUAD}:${playerDraftId}:${taskKey}`;
+  const legacyDraftKey = `runDraft:${APP_SQUAD}:${taskKey}`;
   const historyKey = `runHistory:${APP_SQUAD}:${player?.id || "unknown"}`;
   const hasSavedRunForThisTask = !!savedRun && savedRun.taskKey === taskKey;
 
@@ -2515,26 +2517,19 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       resetManualFields();
 
       try {
-        const draft = JSON.parse(localStorage.getItem(draftKey) || "null");
+        const draft = JSON.parse(localStorage.getItem(draftKey) || localStorage.getItem(legacyDraftKey) || "null");
         if (draft && Array.isArray(draft.points) && draft.points.length) {
-          const resume = window.confirm(`Resume unfinished run?\\n\\nDistance: ${Number(draft.distanceKm || 0).toFixed(2)} km\\nTime: ${fmtTime(Number(draft.elapsed || 0))}`);
-          if (resume) {
-            setPoints(draft.points);
-            pointsRef.current = draft.points;
-            setElapsed(Number(draft.elapsed || 0));
-            elapsedRef.current = Number(draft.elapsed || 0);
-            setStartedAt(draft.startedAt || Date.now());
-            startedAtRef.current = draft.startedAt || Date.now();
-            setLastVoiceKm(Math.floor(Number(draft.distanceKm || 0) * 2) / 2);
-            lastVoiceKmRef.current = Math.floor(Number(draft.distanceKm || 0) * 2) / 2;
-            setGpsStatus("Draft route restored. Tap Resume GPS Run to keep recording.");
-          } else {
-            localStorage.removeItem(draftKey);
-            setStartedAt(null);
-            setElapsed(0);
-            setPoints([]);
-            setLastVoiceKm(0);
-          }
+          setPoints(draft.points);
+          pointsRef.current = draft.points;
+          setElapsed(Number(draft.elapsed || 0));
+          elapsedRef.current = Number(draft.elapsed || 0);
+          setStartedAt(draft.startedAt || Date.now());
+          startedAtRef.current = draft.startedAt || Date.now();
+          setLastVoiceKm(Math.floor(Number(draft.distanceKm || 0) * 2) / 2);
+          lastVoiceKmRef.current = Math.floor(Number(draft.distanceKm || 0) * 2) / 2;
+          saveDraft(draft.points, Number(draft.elapsed || 0));
+          setGpsStatus("Unfinished run restored automatically. Tap Resume GPS Run to keep recording.");
+          showToast?.("Unfinished run restored. It was not cancelled.");
         } else {
           setStartedAt(null);
           setElapsed(0);
@@ -2548,17 +2543,21 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
         setLastVoiceKm(0);
       }
     }
-  }, [open, run.distance, draftKey]);
+  }, [open, run.distance, draftKey, legacyDraftKey]);
+
 
   useEffect(() => {
+    function hasRunInProgress() {
+      return tracking || pointsRef.current.length > 0 || elapsedRef.current > 0;
+    }
     function handleVisibility() {
-      if (tracking) {
+      if (hasRunInProgress()) {
         saveDraft(pointsRef.current, elapsedRef.current);
         if (document.visibilityState === "visible") requestWakeLock();
       }
     }
     function handlePageHide() {
-      if (tracking || pointsRef.current.length) saveDraft(pointsRef.current, elapsedRef.current);
+      if (hasRunInProgress()) saveDraft(pointsRef.current, elapsedRef.current);
     }
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("pagehide", handlePageHide);
@@ -2568,7 +2567,17 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handlePageHide);
     };
-  }, [tracking, draftKey]);
+  }, [tracking, draftKey, legacyDraftKey]);
+
+  useEffect(() => {
+    if (!open) return;
+    const draftInterval = setInterval(() => {
+      if (tracking || pointsRef.current.length > 0 || elapsedRef.current > 0) {
+        saveDraft(pointsRef.current, elapsedRef.current);
+      }
+    }, 3000);
+    return () => clearInterval(draftInterval);
+  }, [open, tracking, draftKey]);
 
   useEffect(() => () => {
     stopWatchingOnly();
@@ -2625,6 +2634,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
 
   function clearDraft() {
     try { localStorage.removeItem(draftKey); } catch (_) {}
+    try { localStorage.removeItem(legacyDraftKey); } catch (_) {}
   }
 
   async function requestWakeLock() {
@@ -2667,12 +2677,10 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
   }
 
   function closeRunModal() {
-    if (tracking || pointsRef.current.length > 0) {
-      const discard = window.confirm("Discard this run? Your current GPS run will not be saved.");
-      if (!discard) {
-        showToast?.("Run kept open. Use Hold to Finish when you are done.");
-        return;
-      }
+    if (tracking || pointsRef.current.length > 0 || elapsedRef.current > 0) {
+      saveDraft(pointsRef.current, elapsedRef.current);
+      showToast?.("Run kept open. Hold Finish and confirm when you are done.");
+      return;
     }
     discardCurrentRun();
     setShareImageUrl(null);
@@ -2877,6 +2885,12 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
   }
 
   function finishGps() {
+    const okToFinish = window.confirm("Finish and save this run now? This is the only way to stop the GPS run.");
+    if (!okToFinish) {
+      saveDraft(pointsRef.current, elapsedRef.current);
+      showToast?.("Run is still recording. Hold Finish again when you are done.");
+      return;
+    }
     const finalPoints = pointsRef.current;
     const finalElapsed = elapsedRef.current || elapsed;
     stopWatchingOnly();
@@ -3182,7 +3196,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
 
             <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:28,color:"var(--g)",letterSpacing:"0.02em"}}>RUN LOGGER</div>
             <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.45,margin:"4px 0 12px"}}>
-              Week {week} · {run.label} · Target {run.distance}. Track with GPS or add manually. The route preview stays on this device.
+              Week {week} · {run.label} · Target {run.distance}. Track with GPS or add manually. GPS runs autosave and can only be stopped with Hold to Finish.
             </div>
 
             <div style={{background:"#fff7e0",border:"1px solid #f4df9b",borderRadius:12,padding:10,fontSize:12,fontWeight:800,color:"#6d5200",lineHeight:1.4,marginBottom:12}}>
@@ -3222,7 +3236,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
                     {tracking ? "HOLD TO FINISH RUN" : (points.length ? "▶ RESUME GPS RUN" : "▶ START GPS RUN")}
                   </button>
                 </div>
-                {tracking && <div style={{fontSize:11,color:"var(--muted)",marginTop:6,fontWeight:800}}>Hold the finish button for 2 seconds to save. Tap will not finish by accident.</div>}
+                {tracking && <div style={{fontSize:11,color:"var(--muted)",marginTop:6,fontWeight:800}}>Hold the finish button for 2 seconds, then confirm to save and stop. Tapping or closing will not cancel the run.</div>}
                 {gpsStatus && <div style={{fontSize:11,color:gpsStatus.includes("Weak") || gpsStatus.includes("dropped") ? "#b26a00" : "var(--muted)",marginTop:6,fontWeight:800}}>{gpsStatus}</div>}
                 {target && <div style={{fontSize:11,color:targetHit?"#2e7d32":"var(--muted)",marginTop:8,fontWeight:800}}>{targetHit ? "✅ Target distance reached" : `Target: ${target} km`}</div>}
               </div>
