@@ -3286,14 +3286,12 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       {selectedRun && !open && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:10020,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"12px 16px",overflowY:"auto"}} onClick={() => setSelectedRun(null)}>
           <div style={{width:"min(520px,100%)",maxHeight:"calc(100vh - 24px)",overflowY:"auto",background:"#fff",borderRadius:18,padding:16,boxShadow:"0 20px 60px rgba(0,0,0,0.32)",position:"relative"}} onClick={e=>e.stopPropagation()}>
-            <div style={{position:"sticky",top:-16,zIndex:2,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:8,margin:"-16px -16px 10px",padding:"14px 58px 10px",textAlign:"center",borderRadius:"18px 18px 0 0",borderBottom:"1px solid #f0dede"}}>
-              <div>
-                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:26,color:"var(--g)",letterSpacing:"0.02em",textAlign:"center"}}>SAVED RUN</div>
-                <div style={{fontSize:12,color:"var(--muted)",textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  Week {selectedRun.week} · {selectedRun.type === "gps" ? "GPS run" : "Manual entry"}
-                </div>
-              </div>
+            <div style={{position:"sticky",top:-16,zIndex:2,background:"#fff",margin:"-16px -16px 10px",padding:"14px 16px 10px",borderRadius:"18px 18px 0 0",borderBottom:"1px solid #f0dede",textAlign:"center"}}>
               <button onClick={() => setSelectedRun(null)} style={{position:"absolute",right:14,top:12,border:0,background:"#f8f1f1",color:"var(--g)",borderRadius:999,width:34,height:34,fontSize:20,fontWeight:900,cursor:"pointer"}}>×</button>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:26,color:"var(--g)",letterSpacing:"0.02em"}}>SAVED RUN</div>
+              <div style={{marginTop:2,fontSize:12,color:"var(--muted)"}}>
+                Week {selectedRun.week} · {selectedRun.type === "gps" ? "GPS Entry" : "Manual Entry"}
+              </div>
             </div>
 
             {selectedRun.shareImageUrl ? (
