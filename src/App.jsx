@@ -198,7 +198,7 @@ function weekMaxPts(w) {
   return w.runs.length*PTS.run + w.skills.length*PTS.skill + w.speed.length*PTS.speed + PTS.squad + PTS.friday;
 }
 
-function playerActivitySummary(checks) {
+function playerActivitySummary(checks, player = null) {
   const summary = {
     runsDone: 0, runsTotal: 0,
     skillsDone: 0, skillsTotal: 0,
@@ -212,14 +212,26 @@ function playerActivitySummary(checks) {
     const approved = [];
     const pending = [];
     const returned = [];
+    const runProofs = [];
 
     w.runs.forEach((r,i) => {
       summary.runsTotal += 1;
-      const state = checks[runKey(w.week,i)];
+      const key = runKey(w.week,i);
+      const state = checks[key];
       if (isApproved(state)) {
         summary.runsDone += 1;
         summary.approvedCount += 1;
-        approved.push(`${r.label} (${r.distance})`);
+        const label = `${r.label} (${r.distance})`;
+        approved.push(label);
+        const proof = loadRunProofForAdmin(player, key, w.week, i);
+        runProofs.push({
+          key,
+          label,
+          week: w.week,
+          runIndex: i,
+          target: r.distance,
+          proof,
+        });
       }
     });
 
@@ -271,10 +283,34 @@ function playerActivitySummary(checks) {
       returned.push("Friday Night Hurling returned");
     }
 
-    return { week: w.week, dates: w.dates, approved, pending, returned };
+    return { week: w.week, dates: w.dates, approved, pending, returned, runProofs };
   }).filter(w => w.approved.length || w.pending.length || w.returned.length);
 
   return { weeks, summary };
+}
+
+function loadRunProofForAdmin(player, taskKey, week, runIndex) {
+  try {
+    const playerId = player?.id || "unknown";
+    const historyKey = `runHistory:${APP_SQUAD}:${playerId}`;
+    const history = JSON.parse(localStorage.getItem(historyKey) || "[]");
+    if (Array.isArray(history)) {
+      const match = history.find(r =>
+        r && (
+          r.taskKey === taskKey ||
+          (Number(r.week) === Number(week) && Number(r.runIndex) === Number(runIndex))
+        )
+      );
+      if (match) return { ...match, source: "history" };
+    }
+  } catch (_) {}
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(`runLog:${APP_SQUAD}:${taskKey}`) || "null");
+    if (saved) return { ...saved, source: "runLog" };
+  } catch (_) {}
+
+  return null;
 }
 
 function ProgressMiniBar({ done, total }) {
@@ -287,7 +323,8 @@ function ProgressMiniBar({ done, total }) {
 }
 
 function PlayerActivityModal({ player, checks, points, maxPossible, onClose }) {
-  const { weeks, summary } = playerActivitySummary(checks || {});
+  const { weeks, summary } = playerActivitySummary(checks || {}, player);
+  const [selectedRunProof, setSelectedRunProof] = useState(null);
   const pct = maxPossible ? Math.round((points / maxPossible) * 100) : 0;
   const categories = [
     { label:"Runs", done:summary.runsDone, total:summary.runsTotal },
@@ -363,10 +400,91 @@ function PlayerActivityModal({ player, checks, points, maxPossible, onClose }) {
                   </span>
                 ))}
               </div>
+
+              {w.runProofs?.length > 0 && (
+                <div style={{marginTop:10,display:"grid",gap:7}}>
+                  {w.runProofs.map((rp, idx) => (
+                    <div key={rp.key || idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,background:"white",border:"1px solid #f0dede",borderRadius:12,padding:"8px 9px"}}>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:900,color:"var(--dark)"}}>🏃 {rp.label}</div>
+                        <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>
+                          {rp.proof?.shareImageUrl ? "Saved screenshot available" : "No saved screenshot found on this device"}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setSelectedRunProof({ ...rp.proof, label: rp.label, target: rp.target, week: rp.week })}
+                        disabled={!rp.proof}
+                        style={{border:0,background:rp.proof ? "var(--g)" : "#eee",color:rp.proof ? "#fff" : "var(--muted)",borderRadius:999,padding:"7px 10px",fontSize:11,fontWeight:900,fontFamily:"inherit",cursor:rp.proof ? "pointer" : "not-allowed",whiteSpace:"nowrap"}}
+                      >
+                        📸 View Run
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
       </div>
+
+      {selectedRunProof && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:10040,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={() => setSelectedRunProof(null)}>
+          <div style={{background:"#fff",borderRadius:18,width:"100%",maxWidth:520,maxHeight:"88vh",overflowY:"auto",boxShadow:"0 18px 60px rgba(0,0,0,0.35)",padding:16}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:10}}>
+              <div>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:25,color:"var(--g)",letterSpacing:"0.03em"}}>RUN DETAILS</div>
+                <div style={{fontSize:12,color:"var(--muted)"}}>{player.name} · Week {selectedRunProof.week || "—"} · {selectedRunProof.label || selectedRunProof.taskKey || "Run"}</div>
+              </div>
+              <button onClick={() => setSelectedRunProof(null)} style={{border:0,background:"#f8f1f1",color:"var(--g)",borderRadius:999,width:34,height:34,fontSize:20,fontWeight:900,cursor:"pointer"}}>×</button>
+            </div>
+
+            {selectedRunProof.shareImageUrl ? (
+              <img src={selectedRunProof.shareImageUrl} alt="Saved run screenshot" style={{width:"100%",borderRadius:14,border:"1px solid #f0dede",marginBottom:12}} />
+            ) : (
+              <div style={{background:"#fff7e6",border:"1px solid #ffd6a6",borderRadius:14,padding:12,fontSize:13,color:"#8a4b00",lineHeight:1.45,marginBottom:12}}>
+                No saved screenshot was found for this completed run on this device.
+              </div>
+            )}
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:12}}>
+              {[
+                ["Distance", selectedRunProof.distanceKm != null ? `${Number(selectedRunProof.distanceKm).toFixed(2)} km` : "—"],
+                ["Time", selectedRunProof.durationMin != null ? `${selectedRunProof.durationMin} min` : "—"],
+                ["Pace", selectedRunProof.pace ? `${selectedRunProof.pace} min/km` : "—"],
+                ["Target", selectedRunProof.target || "—"],
+              ].map(([label,value]) => (
+                <div key={label} style={{background:"#f8f1f1",borderRadius:12,padding:"9px 8px",textAlign:"center"}}>
+                  <div style={{fontSize:10,color:"var(--muted)",fontWeight:900,textTransform:"uppercase",letterSpacing:"0.06em"}}>{label}</div>
+                  <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:22,color:"var(--g)",lineHeight:1.05,marginTop:2}}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.5,marginBottom:12}}>
+              Saved: {formatLocalRunDateTime(selectedRunProof.savedAt || selectedRunProof.updatedAt)}
+              {selectedRunProof.source ? ` · Source: ${selectedRunProof.source}` : ""}
+            </div>
+
+            {Array.isArray(selectedRunProof.points) && selectedRunProof.points.length > 1 && (
+              <MiniRouteMap points={selectedRunProof.points} height={170} />
+            )}
+
+            {selectedRunProof.shareImageUrl && (
+              <button
+                onClick={() => {
+                  const a = document.createElement("a");
+                  a.href = selectedRunProof.shareImageUrl;
+                  a.download = `run-proof-week-${selectedRunProof.week || "run"}.png`;
+                  a.click();
+                }}
+                style={{width:"100%",border:0,background:"var(--g)",color:"#fff",borderRadius:12,padding:"11px 12px",fontWeight:900,fontFamily:"inherit",marginTop:12}}
+              >
+                Download Screenshot
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
