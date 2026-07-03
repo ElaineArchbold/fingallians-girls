@@ -290,26 +290,37 @@ function playerActivitySummary(checks, player = null) {
 }
 
 function loadRunProofForAdmin(player, taskKey, week, runIndex) {
+  const playerId = player?.id || "unknown";
+  if (!playerId || playerId === "unknown") return null;
+
+  function belongsToSelectedPlayer(run) {
+    if (!run) return false;
+
+    // Newer saved proofs may include a player id. If present, it must match.
+    const runPlayerId = run.playerId || run.player_id || run.player?.id || null;
+    if (runPlayerId && String(runPlayerId) !== String(playerId)) return false;
+
+    // Older local history is stored under runHistory:squad:playerId, so entries from that
+    // player-specific bucket are acceptable even if the entry itself has no playerId.
+    return true;
+  }
+
   try {
-    const playerId = player?.id || "unknown";
     const historyKey = `runHistory:${APP_SQUAD}:${playerId}`;
     const history = JSON.parse(localStorage.getItem(historyKey) || "[]");
     if (Array.isArray(history)) {
       const match = history.find(r =>
-        r && (
+        belongsToSelectedPlayer(r) && (
           r.taskKey === taskKey ||
           (Number(r.week) === Number(week) && Number(r.runIndex) === Number(runIndex))
         )
       );
-      if (match) return { ...match, source: "history" };
+      if (match) return { ...match, source: "player history" };
     }
   } catch (_) {}
 
-  try {
-    const saved = JSON.parse(localStorage.getItem(`runLog:${APP_SQUAD}:${taskKey}`) || "null");
-    if (saved) return { ...saved, source: "runLog" };
-  } catch (_) {}
-
+  // Do not fall back to runLog:squad:taskKey here. That key is not player-specific,
+  // so it can show another player's screenshot in the admin leaderboard.
   return null;
 }
 
