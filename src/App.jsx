@@ -2926,8 +2926,19 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     const meetsTarget = !target || distanceKm >= target;
     showToast?.(meetsTarget
       ? `🏃 Run saved: ${distanceKm} km in ${durationMin} min`
-      : `Run saved, but target is ${target} km. It will not count yet.`);
-    if (meetsTarget && !done && canToggle) onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
+      : `Run saved: ${distanceKm} km in ${durationMin} min. Target is ${target} km, so it will not count yet.`);
+
+    // Saving/stopping the GPS run should always close the run logger after confirmation.
+    // Only mark the task complete if the target distance was reached.
+    if (meetsTarget && !done && canToggle) {
+      onToggle(taskKey, PTS.run, `${run.icon || "🏃"} ${run.label} (${run.distance})`);
+    }
+
+    setCompletedRunPromptOpen(false);
+    setSelectedRun(null);
+    setShareImageUrl(null);
+    setMode("gps");
+    setOpen(false);
   }
 
   function beginFinishHold() {
