@@ -198,7 +198,7 @@ function weekMaxPts(w) {
   return w.runs.length*PTS.run + w.skills.length*PTS.skill + w.speed.length*PTS.speed + PTS.squad + PTS.friday;
 }
 
-function playerActivitySummary(checks, player = null) {
+function playerActivitySummary(checks, player = null, sharedProofs = []) {
   const summary = {
     runsDone: 0, runsTotal: 0,
     skillsDone: 0, skillsTotal: 0,
@@ -223,7 +223,7 @@ function playerActivitySummary(checks, player = null) {
         summary.approvedCount += 1;
         const label = `${r.label} (${r.distance})`;
         approved.push(label);
-        const proof = loadRunProofForAdmin(player, key, w.week, i);
+        const proof = loadRunProofForAdmin(player, key, w.week, i, sharedProofs);
         runProofs.push({
           key,
           label,
@@ -289,9 +289,44 @@ function playerActivitySummary(checks, player = null) {
   return { weeks, summary };
 }
 
-function loadRunProofForAdmin(player, taskKey, week, runIndex) {
+function normaliseRunProof(row) {
+  if (!row) return null;
+  return {
+    id: row.id || row.proof_id || null,
+    source: row.source || "shared proof",
+    playerId: row.player_id || row.playerId || row.player?.id || null,
+    playerName: row.player_name || row.playerName || row.player?.name || "",
+    taskKey: row.task_key || row.taskKey || "",
+    week: row.week,
+    runIndex: row.run_index ?? row.runIndex ?? null,
+    label: row.label || row.run_label || "",
+    target: row.target || row.target_distance || "",
+    type: row.run_type || row.type || "run",
+    distanceKm: row.distance_km ?? row.distanceKm ?? null,
+    durationMin: row.duration_min ?? row.durationMin ?? null,
+    pace: row.pace_min_per_km ?? row.pace ?? null,
+    note: row.note || "",
+    savedAt: row.saved_at || row.savedAt || row.created_at || null,
+    updatedAt: row.updated_at || row.updatedAt || null,
+    shareImageUrl: row.share_image_url || row.shareImageUrl || null,
+    hasScreenshot: !!(row.share_image_url || row.shareImageUrl),
+    points: Array.isArray(row.points) ? row.points : [],
+  };
+}
+
+function loadRunProofForAdmin(player, taskKey, week, runIndex, sharedProofs = []) {
   const playerId = player?.id || "unknown";
   if (!playerId || playerId === "unknown") return null;
+
+  const sharedMatch = (sharedProofs || []).map(normaliseRunProof).find(r =>
+    r &&
+    String(r.playerId || "") === String(playerId) &&
+    (
+      r.taskKey === taskKey ||
+      (Number(r.week) === Number(week) && Number(r.runIndex) === Number(runIndex))
+    )
+  );
+  if (sharedMatch) return { ...sharedMatch, source: "shared proof" };
 
   function belongsToSelectedPlayer(run) {
     if (!run) return false;
@@ -324,6 +359,43 @@ function loadRunProofForAdmin(player, taskKey, week, runIndex) {
   return null;
 }
 
+async function saveRunProofToSupabase(player, entry, runIndex = null) {
+  if (!player?.id || !entry?.taskKey) return;
+
+  const row = {
+    squad: APP_SQUAD,
+    player_id: player.id,
+    player_name: player.name || "",
+    task_key: entry.taskKey,
+    week: Number(entry.week) || null,
+    run_index: runIndex,
+    label: entry.label || "",
+    target: entry.target || "",
+    run_type: entry.type || "run",
+    distance_km: entry.distanceKm != null ? Number(entry.distanceKm) : null,
+    duration_min: entry.durationMin != null ? Number(entry.durationMin) : null,
+    pace_min_per_km: entry.pace != null ? Number(entry.pace) : null,
+    note: entry.note || null,
+    saved_at: entry.savedAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    has_screenshot: !!entry.shareImageUrl,
+    // Keep screenshot local for now. Data URL screenshots can be too large for a database row.
+    share_image_url: null,
+  };
+
+  try {
+    const { error } = await sb
+      .from("run_proofs")
+      .upsert(row, { onConflict: "squad,player_id,task_key" });
+
+    if (error) {
+      console.error("Run proof save failed", error, row);
+    }
+  } catch (e) {
+    console.error("Run proof save crashed", e, row);
+  }
+}
+
 function ProgressMiniBar({ done, total }) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   return (
@@ -334,8 +406,43 @@ function ProgressMiniBar({ done, total }) {
 }
 
 function PlayerActivityModal({ player, checks, points, maxPossible, onClose }) {
-  const { weeks, summary } = playerActivitySummary(checks || {}, player);
   const [selectedRunProof, setSelectedRunProof] = useState(null);
+  const [sharedRunProofs, setSharedRunProofs] = useState([]);
+  const [proofsLoading, setProofsLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSharedRunProofs() {
+      if (!player?.id) {
+        setSharedRunProofs([]);
+        return;
+      }
+      setProofsLoading(true);
+      try {
+        const { data, error } = await sb
+          .from("run_proofs")
+          .select("*")
+          .eq("squad", APP_SQUAD)
+          .eq("player_id", player.id);
+
+        if (error) {
+          console.error("Run proofs load failed", error);
+          if (!cancelled) setSharedRunProofs([]);
+        } else if (!cancelled) {
+          setSharedRunProofs(Array.isArray(data) ? data.map(normaliseRunProof).filter(Boolean) : []);
+        }
+      } catch (e) {
+        console.error("Run proofs load crashed", e);
+        if (!cancelled) setSharedRunProofs([]);
+      } finally {
+        if (!cancelled) setProofsLoading(false);
+      }
+    }
+    loadSharedRunProofs();
+    return () => { cancelled = true; };
+  }, [player?.id]);
+
+  const { weeks, summary } = playerActivitySummary(checks || {}, player, sharedRunProofs);
   const pct = maxPossible ? Math.round((points / maxPossible) * 100) : 0;
   const categories = [
     { label:"Runs", done:summary.runsDone, total:summary.runsTotal },
@@ -385,6 +492,12 @@ function PlayerActivityModal({ player, checks, points, maxPossible, onClose }) {
             )}
           </div>
 
+          {proofsLoading && (
+            <div style={{background:"#fff9e8",border:"1px solid var(--gold)",borderRadius:12,padding:"9px 10px",fontSize:12,color:"var(--dark)",marginBottom:10,textAlign:"center"}}>
+              Loading saved run details for this player…
+            </div>
+          )}
+
           {weeks.length === 0 && (
             <div style={{textAlign:"center",color:"var(--muted)",padding:"28px 0",fontSize:13}}>No activities completed yet.</div>
           )}
@@ -419,7 +532,7 @@ function PlayerActivityModal({ player, checks, points, maxPossible, onClose }) {
                       <div>
                         <div style={{fontSize:12,fontWeight:900,color:"var(--dark)"}}>🏃 {rp.label}</div>
                         <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>
-                          {rp.proof?.shareImageUrl ? "Saved screenshot available" : "No saved screenshot found on this device"}
+                          {rp.proof?.shareImageUrl ? "Saved screenshot available" : (rp.proof ? "Run details available" : "No saved run details found yet")}
                         </div>
                       </div>
                       <button
@@ -453,16 +566,18 @@ function PlayerActivityModal({ player, checks, points, maxPossible, onClose }) {
               <img src={selectedRunProof.shareImageUrl} alt="Saved run screenshot" style={{width:"100%",borderRadius:14,border:"1px solid #f0dede",marginBottom:12}} />
             ) : (
               <div style={{background:"#fff7e6",border:"1px solid #ffd6a6",borderRadius:14,padding:12,fontSize:13,color:"#8a4b00",lineHeight:1.45,marginBottom:12}}>
-                No saved screenshot was found for this completed run on this device.
+                No saved screenshot was found for this run, but any saved details are shown below.
               </div>
             )}
 
             <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:12}}>
               {[
+                ["Type", selectedRunProof.type ? String(selectedRunProof.type).toUpperCase() : "—"],
                 ["Distance", selectedRunProof.distanceKm != null ? `${Number(selectedRunProof.distanceKm).toFixed(2)} km` : "—"],
                 ["Time", selectedRunProof.durationMin != null ? `${selectedRunProof.durationMin} min` : "—"],
                 ["Pace", selectedRunProof.pace ? `${selectedRunProof.pace} min/km` : "—"],
                 ["Target", selectedRunProof.target || "—"],
+                ["Date", selectedRunProof.savedAt ? formatLocalRunDateTime(selectedRunProof.savedAt) : "—"],
               ].map(([label,value]) => (
                 <div key={label} style={{background:"#f8f1f1",borderRadius:12,padding:"9px 8px",textAlign:"center"}}>
                   <div style={{fontSize:10,color:"var(--muted)",fontWeight:900,textTransform:"uppercase",letterSpacing:"0.06em"}}>{label}</div>
@@ -2602,6 +2717,9 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       const runEntry = {
         ...entry,
         id: entry.id || `latest:${player?.id || "unknown"}`,
+        playerId: player?.id || null,
+        playerName: player?.name || "",
+        runIndex,
         savedAt: entry.savedAt || new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -2782,6 +2900,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     };
     const imageUrl = createShareImage(saved, { silent: true });
     const savedWithImage = saveHistory({ ...saved, shareImageUrl: imageUrl });
+    saveRunProofToSupabase(player, savedWithImage, runIndex);
     setSavedRun(savedWithImage);
     setShareImageUrl(imageUrl);
     try { localStorage.setItem(storageKey, JSON.stringify(savedWithImage)); } catch (_) {}
@@ -2848,6 +2967,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
     };
     const imageUrl = createShareImage(saved, { silent: true });
     const savedWithImage = saveHistory({ ...saved, shareImageUrl: imageUrl });
+    saveRunProofToSupabase(player, savedWithImage, runIndex);
     setSavedRun(savedWithImage);
     setShareImageUrl(imageUrl);
     try { localStorage.setItem(storageKey, JSON.stringify(savedWithImage)); } catch (_) {}
