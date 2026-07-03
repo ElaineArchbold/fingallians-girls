@@ -2481,6 +2481,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
 
   const playerRunId = player?.id || "unknown";
   const storageKey = `runLog:${APP_SQUAD}:${playerRunId}:${taskKey}`;
+  const legacyStorageKey = `runLog:${APP_SQUAD}:${taskKey}`;
   const playerDraftId = player?.id || "unknown";
   const draftKey = `runDraft:${APP_SQUAD}:${playerDraftId}:${taskKey}`;
   const legacyDraftKey = `runDraft:${APP_SQUAD}:${taskKey}`;
@@ -2488,9 +2489,53 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
   const archiveKey = `runArchive:${APP_SQUAD}:${playerRunId}`;
   const hasSavedRunForThisTask = !!savedRun && savedRun.taskKey === taskKey;
 
+  function findSavedRunForThisTask() {
+    try {
+      const candidates = [
+        JSON.parse(localStorage.getItem(storageKey) || "null"),
+        JSON.parse(localStorage.getItem(`runProofLatest:${APP_SQUAD}:${playerRunId}:${taskKey}`) || "null"),
+        JSON.parse(localStorage.getItem(legacyStorageKey) || "null"),
+      ].filter(Boolean);
+
+      const h = JSON.parse(localStorage.getItem(historyKey) || "[]");
+      if (Array.isArray(h)) {
+        candidates.push(...h.filter(r => r?.taskKey === taskKey));
+      }
+
+      const archive = JSON.parse(localStorage.getItem(archiveKey) || "[]");
+      if (Array.isArray(archive)) {
+        candidates.push(...archive.filter(r => r?.taskKey === taskKey));
+      }
+
+      const match = candidates.find(r => {
+        if (!r || r.taskKey !== taskKey) return false;
+        const runPlayerId = r.playerId || r.player_id || r.player?.id || null;
+        const runPlayerName = r.playerName || r.player_name || r.player?.name || "";
+        if (runPlayerId && String(runPlayerId) !== String(playerRunId)) return false;
+        if (runPlayerName && player?.name && runPlayerName !== player.name) return false;
+        return true;
+      }) || null;
+
+      if (match) {
+        const normalised = {
+          ...match,
+          playerId: match.playerId || player?.id || null,
+          playerName: match.playerName || player?.name || "",
+          taskKey,
+        };
+        localStorage.setItem(storageKey, JSON.stringify(normalised));
+        localStorage.setItem(`runProofLatest:${APP_SQUAD}:${playerRunId}:${taskKey}`, JSON.stringify(normalised));
+        return normalised;
+      }
+    } catch (e) {
+      console.error("Saved run lookup failed", e);
+    }
+    return null;
+  }
+
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(storageKey) || "null");
+      const saved = findSavedRunForThisTask();
       if (saved) {
         setSavedRun(saved);
         if (saved.type === "gps" && Array.isArray(saved.points)) setPoints(saved.points);
@@ -2498,7 +2543,7 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
       const h = JSON.parse(localStorage.getItem(historyKey) || "[]");
       setHistory(Array.isArray(h) ? h : []);
     } catch (_) {}
-  }, [storageKey, historyKey]);
+  }, [storageKey, legacyStorageKey, historyKey, archiveKey, playerRunId, player?.id, player?.name, taskKey]);
 
   useEffect(() => { pointsRef.current = points; }, [points]);
   useEffect(() => { elapsedRef.current = elapsed; }, [elapsed]);
@@ -3183,8 +3228,10 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
           e.stopPropagation();
           if (!canToggle) return;
           if (done) {
-            if (hasSavedRunForThisTask) {
-              setSelectedRun(savedRun);
+            const runToView = hasSavedRunForThisTask ? savedRun : findSavedRunForThisTask();
+            if (runToView) {
+              setSavedRun(runToView);
+              setSelectedRun(runToView);
             } else {
               setCompletedRunPromptOpen(true);
             }
@@ -3209,8 +3256,10 @@ function RunLoggerV1({ week, runIndex, run, taskKey, done, canToggle, onToggle, 
                 <button
                   onClick={() => {
                     setCompletedRunPromptOpen(false);
-                    if (savedRun) {
-                      setSelectedRun(savedRun);
+                    const runToView = savedRun || findSavedRunForThisTask();
+                    if (runToView) {
+                      setSavedRun(runToView);
+                      setSelectedRun(runToView);
                     } else if (isChildView) {
                       showToast?.("Ask your parent to open the Progress tab to view and share the saved screenshot.");
                     } else {
